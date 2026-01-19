@@ -15,9 +15,82 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 	background_pipeline.create(rtg, render_pass, 0);
 	lines_pipeline.create(rtg, render_pass, 0);
 
+	{
+		uint32_t per_workspace = uint32_t(rtg.workspaces.size());
+		
+		std::array<VkDescriptorPoolSize, 1> pool_sizes {
+			VkDescriptorPoolSize {
+				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.descriptorCount = 1 * per_workspace,
+			},
+		};
+
+		VkDescriptorPoolCreateInfo create_info {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.flags = 0,
+			.maxSets = 1 * per_workspace,
+			.poolSizeCount = uint32_t(pool_sizes.size()),
+			.pPoolSizes = pool_sizes.data(),
+		};
+
+		VK(vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &descriptor_pool));
+	}
+
 	workspaces.resize(rtg.workspaces.size());
 	for (Workspace &workspace : workspaces) {
 		refsol::Tutorial_constructor_workspace(rtg, command_pool, &workspace.command_buffer);
+
+		workspace.Camera_src = rtg.helpers.create_buffer(
+			sizeof(LinesPipeline::Camera),
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			Helpers::Mapped
+		);
+		workspace.Camera = rtg.helpers.create_buffer(
+			sizeof(LinesPipeline::Camera),
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			Helpers::Unmapped
+		);
+
+		{
+			VkDescriptorSetAllocateInfo alloc_info {
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &lines_pipeline.set0_Camera,
+			};
+
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Camera_descriptors));
+		}
+
+		{
+			VkDescriptorBufferInfo Camera_info {
+				.buffer = workspace.Camera.handle,
+				.offset = 0,
+				.range = workspace.Camera.size,
+			};
+
+			std::array<VkWriteDescriptorSet, 1> writes {
+				VkWriteDescriptorSet {
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Camera_descriptors,
+					.dstBinding = 0,
+					.dstArrayElement = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+					.pBufferInfo = &Camera_info,
+				},
+			};
+
+			vkUpdateDescriptorSets(
+				rtg.device,
+				uint32_t(writes.size()),
+				writes.data(),
+				0,
+				nullptr
+			);
+		}
 	}
 }
 
@@ -41,8 +114,20 @@ Tutorial::~Tutorial() {
 		if (workspace.lines_vertices.handle != VK_NULL_HANDLE) {
 			rtg.helpers.destroy_buffer(std::move(workspace.lines_vertices));
 		}
+
+		if (workspace.Camera_src.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.Camera_src));
+		}
+		if (workspace.Camera.handle != VK_NULL_HANDLE) {
+			rtg.helpers.destroy_buffer(std::move(workspace.Camera));
+		}
 	}
 	workspaces.clear();
+
+	if (descriptor_pool) {
+		vkDestroyDescriptorPool(rtg.device, descriptor_pool, nullptr);
+		descriptor_pool = nullptr;
+	}
 
 	background_pipeline.destroy(rtg);
 	lines_pipeline.destroy(rtg);
@@ -122,6 +207,23 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			.size = needed_bytes,
 		};
 		vkCmdCopyBuffer(workspace.command_buffer, workspace.lines_vertices_src.handle, workspace.lines_vertices.handle, 1, &copy_reign);
+	}
+
+	{
+		LinesPipeline::Camera camera{
+			.CLIP_FROM_WORLD = CLIP_FROM_WORLD
+		};
+		assert(workspace.Camera_src.size == sizeof(camera));
+
+		memcpy(workspace.Camera_src.allocation.data(), &camera, sizeof(camera));
+
+		assert(workspace.Camera_src.size == workspace.Camera.size);
+		VkBufferCopy copy_region{
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = workspace.Camera_src.size,
+		};
+		vkCmdCopyBuffer(workspace.command_buffer, workspace.Camera_src.handle, workspace.Camera.handle, 1, &copy_region);
 	}
 
 	{ //memory barrier
@@ -204,6 +306,20 @@ void Tutorial::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 				vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
 			}
 
+			{
+				std::array<VkDescriptorSet, 1> descriptor_sets{
+					workspace.Camera_descriptors,
+				};
+				vkCmdBindDescriptorSets(
+					workspace.command_buffer,
+					VK_PIPELINE_BIND_POINT_GRAPHICS,
+					lines_pipeline.layout,
+					0,
+					uint32_t(descriptor_sets.size()), descriptor_sets.data(),
+					0, nullptr
+				);
+			}
+
 			vkCmdDraw(workspace.command_buffer, uint32_t(lines_vertices.size()), 1, 0, 0);
 		}
 
@@ -281,13 +397,6 @@ void Tutorial::update(float dt) {
 		}
 
 		assert(lines_vertices.size() == count);
-	}
-
-	for (PosColVertex &v : lines_vertices) {
-		vec4 res = CLIP_FROM_WORLD * vec4{v.Position.x, v.Position.y, v.Position.z, 1.0f};
-		v.Position.x = res[0] / res[3];
-		v.Position.y = res[1] / res[3];
-		v.Position.z = res[2] / res[3];
 	}
 }
 
