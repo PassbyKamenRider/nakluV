@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PosColVertex.hpp"
+
 #include "RTG.hpp"
 
 struct Tutorial : RTG::Application {
@@ -33,6 +35,17 @@ struct Tutorial : RTG::Application {
 		void destroy(RTG &);
 	} background_pipeline;
 
+	struct LinesPipeline {
+		VkPipelineLayout layout = VK_NULL_HANDLE;
+
+		using Vertex = PosColVertex;
+
+		VkPipeline handle = VK_NULL_HANDLE;
+
+		void create(RTG &, VkRenderPass render_pass, uint32_t subpass);
+		void destroy(RTG &);
+	} lines_pipeline;
+
 	//pools from which per-workspace things are allocated:
 	VkCommandPool command_pool = VK_NULL_HANDLE;
 
@@ -40,6 +53,8 @@ struct Tutorial : RTG::Application {
 	struct Workspace {
 		VkCommandBuffer command_buffer = VK_NULL_HANDLE; //from the command pool above; reset at the start of every render.
 
+		Helpers::AllocatedBuffer lines_vertices_src;
+		Helpers::AllocatedBuffer lines_vertices;
 	};
 	std::vector< Workspace > workspaces;
 
@@ -64,6 +79,8 @@ struct Tutorial : RTG::Application {
 	virtual void on_input(InputEvent const &) override;
 
 	float time = 0.0f;
+
+	std::vector<LinesPipeline::Vertex> lines_vertices;
 
 	//--------------------------------------------------------------------
 	//Rendering function, uses all the resources above to queue work to draw a frame:
