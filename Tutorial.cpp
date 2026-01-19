@@ -221,26 +221,42 @@ void Tutorial::update(float dt) {
 	time = std::fmod(time + dt, 60.0f);
 
 	{
+		float ang = float(M_PI) * 2.0f * 10.0f * (time / 60.0f);
+		CLIP_FROM_WORLD = perspective(
+			60.0f * float(M_PI) / 180.0f,
+			rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),
+			0.1f,
+			1000.0f
+		) * look_at(
+			3.0f * std::cos(ang), 3.0f * std::sin(ang), 1.0f,
+			0.0f, 0.0f, 0.5f,
+			0.0f, 0.0f, 1.0f
+		);
+	}
+
+	{
 		lines_vertices.clear();
 		constexpr size_t count = 2 * 30 * 30 + 2 * 30 * 30;
 		lines_vertices.reserve(count);
-
-		float PI = 3.14f;
 
 		auto get_spherized_pos = [&](float x, float y) {
 			float u = (x + 1.0f) * 0.5f;
 			float v = (y + 1.0f) * 0.5f;
 
-			float theta = (PI / 2.0f) * u; 
-			float phi = 2.0f * PI * v;
+			float theta = (float(M_PI) / 2.0f) * u; 
+			float phi = 2.0f * float(M_PI) * v;
 
 			float nx = std::sin(theta) * std::cos(phi);
 			float ny = std::sin(theta) * std::sin(phi);
 			float nz = std::cos(theta);
 
+			uint8_t r = (uint8_t) (sin(time * 0.2f) * 255);
+			uint8_t g = (uint8_t) (cos(time * 0.2f) * 255);
+			uint8_t b = (uint8_t) (sin(time * 0.5f) * 255);
+
 			return PosColVertex{
 				.Position{ .x = nx, .y = ny, .z = nz },
-				.Color{ .r = 0x00, .g = 0x00, .b = 0x00, .a = 0xff}
+				.Color{ .r = r, .g = g, .b = b, .a = 0xff }
 			};
 		};
 
@@ -265,6 +281,13 @@ void Tutorial::update(float dt) {
 		}
 
 		assert(lines_vertices.size() == count);
+	}
+
+	for (PosColVertex &v : lines_vertices) {
+		vec4 res = CLIP_FROM_WORLD * vec4{v.Position.x, v.Position.y, v.Position.z, 1.0f};
+		v.Position.x = res[0] / res[3];
+		v.Position.y = res[1] / res[3];
+		v.Position.z = res[2] / res[3];
 	}
 }
 
