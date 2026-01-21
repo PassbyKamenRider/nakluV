@@ -359,16 +359,16 @@ void Tutorial::update(float dt) {
 			float u = (x + 1.0f) * 0.5f;
 			float v = (y + 1.0f) * 0.5f;
 
-			float theta = (float(M_PI) / 2.0f) * u; 
+			float theta = float(M_PI) * u; 
 			float phi = 2.0f * float(M_PI) * v;
 
 			float nx = std::sin(theta) * std::cos(phi);
 			float ny = std::sin(theta) * std::sin(phi);
 			float nz = std::cos(theta);
 
-			uint8_t r = (uint8_t) (sin(time * 0.2f) * 255);
-			uint8_t g = (uint8_t) (cos(time * 0.2f) * 255);
-			uint8_t b = (uint8_t) (sin(time * 0.5f) * 255);
+			uint8_t r = (uint8_t) (cos(time * 0.3f) * 255);
+			uint8_t g = (uint8_t) (cos(time * 0.4f) * 255);
+			uint8_t b = (uint8_t) (cos(time * 0.5f) * 255);
 
 			return PosColVertex{
 				.Position{ .x = nx, .y = ny, .z = nz },
