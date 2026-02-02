@@ -32,7 +32,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 				.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
 				.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
 				.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-				.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+				.finalLayout = rtg.present_layout,
 			},
 			VkAttachmentDescription{ //depth attachment:
 				.format = depth_format,
@@ -1131,7 +1131,7 @@ void Tutorial::update(float dt) {
 				0.1f,
 				1000.0f
 			) * look_at(
-				3.0f * std::cos(ang), 3.0f * std::sin(ang), 1.0f,
+				10.0f * std::cos(ang), 10.0f * std::sin(ang), 10.0f,
 				0.0f, 0.0f, 0.5f,
 				0.0f, 0.0f, 1.0f
 			);

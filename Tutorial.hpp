@@ -158,7 +158,7 @@ struct Tutorial : RTG::Application {
 	enum class CameraMode {
 		Scene = 0,
 		Free = 1,
-	} camera_mode = CameraMode::Free;
+	} camera_mode = CameraMode::Scene;
 
 	//used when camera_mode == CameraMode::Free:
 	struct OrbitCamera {
