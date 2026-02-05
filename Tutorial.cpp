@@ -5,7 +5,7 @@
 #include <GLFW/glfw3.h>
 
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "libs/stb_image.h"
 
 #include <array>
 #include <cassert>
@@ -525,7 +525,7 @@ Tutorial::Tutorial(RTG &rtg_) : rtg(rtg_) {
 
 		{ //pyramid texture
 			int width, height, channels;
-			stbi_uc* pixels = stbi_load("pyramid_texture.png", &width, &height, &channels, STBI_rgb_alpha);
+			stbi_uc* pixels = stbi_load("textures/pyramid_texture.png", &width, &height, &channels, STBI_rgb_alpha);
 
 			uint32_t img_w = uint32_t(width);
 			uint32_t img_h = uint32_t(height);

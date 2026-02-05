@@ -2,6 +2,7 @@
 #include "RTG.hpp"
 
 #include "Tutorial.hpp"
+#include "a1/S72Loader.hpp"
 
 #include <iostream>
 
@@ -41,7 +42,7 @@ int main(int argc, char **argv) {
 		RTG rtg(configuration);
 
 		//initializes global (whole-life-of-application) resources:
-		Tutorial application(rtg);
+		S72Loader application(rtg);
 
 		//main loop -- handles events, renders frames, etc:
 		rtg.run(application);
