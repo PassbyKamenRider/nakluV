@@ -137,3 +137,39 @@ inline mat4 orbit(
 		-right_dot_eye, -up_dot_eye, -out_dot_eye, 1.0f,
 	};
 }
+
+inline mat4 mat4_translation(float x, float y, float z) {
+    return mat4{
+        1,0,0,0, 
+        0,1,0,0, 
+        0,0,1,0, 
+        x,y,z,1
+    };
+}
+
+inline mat4 mat4_scale(float x, float y, float z) {
+    return mat4{
+        x,0,0,0, 
+        0,y,0,0, 
+        0,0,z,0, 
+        0,0,0,1
+    };
+}
+
+inline mat4 mat4_rotation(float x, float y, float z, float w) {
+    return mat4{
+        1.0f - 2.0f*y*y - 2.0f*z*z, 2.0f*x*y + 2.0f*z*w,        2.0f*x*z - 2.0f*y*w,        0.0f,
+        2.0f*x*y - 2.0f*z*w,        1.0f - 2.0f*x*x - 2.0f*z*z, 2.0f*y*z + 2.0f*x*w,        0.0f,
+        2.0f*x*z + 2.0f*y*w,        2.0f*y*z - 2.0f*x*w,        1.0f - 2.0f*x*x - 2.0f*y*y, 0.0f,
+        0.0f,                       0.0f,                       0.0f,                       1.0f
+    };
+}
+
+inline mat4 mat4_identity() {
+    return mat4{
+		1,0,0,0,
+		0,1,0,0,
+		0,0,1,0,
+		0,0,0,1
+	};
+}

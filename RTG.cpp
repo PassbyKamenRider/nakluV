@@ -51,6 +51,13 @@ void RTG::Configuration::parse(int argc, char **argv) {
                 throw std::runtime_error("--scene requires a parameter (a filename).");
             }
 			argi += 1;
+			scene_path = argv[argi];
+		} else if (arg == "--camera") {
+			if (argi + 1 >= argc) {
+                throw std::runtime_error("--camera requires a parameter (a camera name).");
+            }
+			argi += 1;
+			camera_name = argv[argi];
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}
@@ -62,6 +69,8 @@ void RTG::Configuration::usage(std::function< void(const char *, const char *) >
 	callback("--debug, --no-debug", "Turn on/off debug and validation layers.");
 	callback("--physical-device <name>", "Run on the named physical device (guesses, otherwise).");
 	callback("--drawing-size <w> <h>", "Set the size of the surface to draw to.");
+	callback("--scene <path>", "Load a scene from the given path.");
+	callback("--camera <name>", "Use the named camera from the scene.");
 }
 
 void RTG::HeadlessSwapchainImage::save() const {
