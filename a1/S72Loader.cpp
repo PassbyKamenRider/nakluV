@@ -35,33 +35,49 @@ void S72Loader::traverse_scene(S72::Node* node, glm::mat4 const &parent_from_wor
             auto mat_it = material_data.find(node->mesh->material->name);
             inst.texture = (mat_it != material_data.end()) ? mat_it->second.texture_index : 0;
             
-            object_instances.emplace_back(inst);
+			if (camera_mode == CameraMode::Scene) {
+				glm::mat4 view_from_world = glm::inverse(active_camera->world_from_local);
+				glm::mat4 vs_transform = view_from_world * world_matrix;
+
+				if (SAT_visibility_test(active_frustum_props, vs_transform, it->second.aabb)) {
+					object_instances.emplace_back(inst);
+				}
+			}
+			else
+			{
+				object_instances.emplace_back(inst);
+			}
 
             if (isDebugMode) {
-                auto const& m_min = it->second.min; 
-                auto const& m_max = it->second.max;
+				auto aabb = it->second.aabb;
+                glm::vec3 local_corners[8] = {
+					{aabb.min.x, aabb.min.y, aabb.min.z},
+					{aabb.max.x, aabb.min.y, aabb.min.z},
+					{aabb.min.x, aabb.max.y, aabb.min.z},
+					{aabb.max.x, aabb.max.y, aabb.min.z},
+					{aabb.min.x, aabb.min.y, aabb.max.z},
+					{aabb.max.x, aabb.min.y, aabb.max.z},
+					{aabb.min.x, aabb.max.y, aabb.max.z},
+					{aabb.max.x, aabb.max.y, aabb.max.z}
+				};
 
-                std::array<glm::vec3, 8> world_corners;
-                for (uint32_t i = 0; i < 8; ++i) {
-                    glm::vec4 p_local = {
-                        (i & 1) ? m_max.x : m_min.x,
-                        (i & 2) ? m_max.y : m_min.y,
-                        (i & 4) ? m_max.z : m_min.z,
-                        1.0f
-                    };
-                    world_corners[i] = glm::vec3(world_matrix * p_local);
-                }
+				glm::vec3 world_corners[8];
+				for (int i = 0; i < 8; ++i) {
+					world_corners[i] = glm::vec3(world_matrix * glm::vec4(local_corners[i], 1.0f));
+				}
 
-                static const uint32_t indices[] = {
-                    0,1, 1,3, 3,2, 2,0, 4,5, 5,7, 7,6, 6,4, 0,4, 1,5, 2,6, 3,7
-                };
+				static const uint32_t indices[] = {
+					0, 1,  1, 3,  3, 2,  2, 0,
+					4, 5,  5, 7,  7, 6,  6, 4,
+					0, 4,  1, 5,  2, 6,  3, 7
+				};
 
-                for (uint32_t idx : indices) {
-                    PosColVertex v;
-                    v.Position = { world_corners[idx].x, world_corners[idx].y, world_corners[idx].z };
-                    v.Color = { 0, 255, 0, 255 };
-                    lines_vertices.push_back(v);
-                }
+				for (uint32_t idx : indices) {
+					PosColVertex v;
+					v.Position = {world_corners[idx].x, world_corners[idx].y, world_corners[idx].z};
+					v.Color = {0, 255, 0, 255};
+					lines_vertices.push_back(v);
+				}
             }
         }
     }
@@ -73,36 +89,33 @@ void S72Loader::traverse_scene(S72::Node* node, glm::mat4 const &parent_from_wor
         }
 
         if (isDebugMode && node->camera->name == rtg.configuration.camera_name) {
-            if (std::holds_alternative<S72::Camera::Perspective>(node->camera->projection)) {
-                auto const& p_data = std::get<S72::Camera::Perspective>(node->camera->projection);
-                
-                float far_z = std::isfinite(p_data.far) ? p_data.far : 1000.0f;
-                glm::mat4 P = glm::perspective(p_data.vfov, p_data.aspect, p_data.near, far_z);
-                
-                glm::mat4 WORLD_FROM_CLIP = world_matrix * glm::inverse(P);
+            auto const& p_data = std::get<S72::Camera::Perspective>(node->camera->projection);
 
-                std::array<glm::vec4, 8> ndc_corners = {
-                    glm::vec4{-1,-1, 0, 1}, glm::vec4{ 1,-1, 0, 1}, glm::vec4{-1, 1, 0, 1}, glm::vec4{ 1, 1, 0, 1},
-                    glm::vec4{-1,-1, 1, 1}, glm::vec4{ 1,-1, 1, 1}, glm::vec4{-1, 1, 1, 1}, glm::vec4{ 1, 1, 1, 1}
-                };
+			glm::mat4 P = glm::perspective(p_data.vfov, p_data.aspect, p_data.near, p_data.far);
+			
+			glm::mat4 WORLD_FROM_CLIP = world_matrix * glm::inverse(P);
 
-                std::array<glm::vec3, 8> world_corners;
-                for (int i = 0; i < 8; ++i) {
-                    glm::vec4 p = WORLD_FROM_CLIP * ndc_corners[i];
-                    world_corners[i] = glm::vec3(p) / p.w;
-                }
+			std::array<glm::vec4, 8> ndc_corners = {
+				glm::vec4{-1,-1, 0, 1}, glm::vec4{ 1,-1, 0, 1}, glm::vec4{-1, 1, 0, 1}, glm::vec4{ 1, 1, 0, 1},
+				glm::vec4{-1,-1, 1, 1}, glm::vec4{ 1,-1, 1, 1}, glm::vec4{-1, 1, 1, 1}, glm::vec4{ 1, 1, 1, 1}
+			};
 
-                static const uint32_t f_indices[] = { 
-                    0,1, 1,3, 3,2, 2,0, 4,5, 5,7, 7,6, 6,4, 0,4, 1,5, 2,6, 3,7 
-                };
+			std::array<glm::vec3, 8> world_corners;
+			for (int i = 0; i < 8; ++i) {
+				glm::vec4 p = WORLD_FROM_CLIP * ndc_corners[i];
+				world_corners[i] = glm::vec3(p) / p.w;
+			}
 
-                for (uint32_t idx : f_indices) {
-                    PosColVertex v;
-                    v.Position = { world_corners[idx].x, world_corners[idx].y, world_corners[idx].z };
-                    v.Color = { 255, 255, 0, 255 };
-                    lines_vertices.push_back(v);
-                }
-            }
+			static const uint32_t indices[] = { 
+				0,1, 1,3, 3,2, 2,0, 4,5, 5,7, 7,6, 6,4, 0,4, 1,5, 2,6, 3,7 
+			};
+
+			for (uint32_t idx : indices) {
+				PosColVertex v;
+				v.Position = { world_corners[idx].x, world_corners[idx].y, world_corners[idx].z };
+				v.Color = {255, 255, 0, 255};
+				lines_vertices.push_back(v);
+			}
         }
     }
 
@@ -183,6 +196,7 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_) {
         CameraInstance inst;
         inst.props = std::get<S72::Camera::Perspective>(cam.projection);
         cameras[name] = inst;
+		camera_list.push_back(&cameras[name]);
         
         if (name == rtg.configuration.camera_name) {
             active_camera = &cameras[name];
@@ -211,8 +225,8 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_) {
 				
 				vertices[info.first + i].Position = { pos.x, pos.y, pos.z };
 
-				info.min = glm::min(info.min, pos);
-				info.max = glm::max(info.max, pos);
+				info.aabb.min = glm::min(info.aabb.min, pos);
+				info.aabb.max = glm::max(info.aabb.max, pos);
             }
         }
 
@@ -1187,6 +1201,82 @@ inline glm::mat4 orbit(
     );
 }
 
+bool S72Loader::SAT_visibility_test(const CullingFrustum& frustum, const glm::mat4& world_to_view, const AABB& aabb) {
+    float z_near = frustum.near_plane;
+    float z_far = frustum.far_plane;
+    float x_near = frustum.near_right;
+    float y_near = frustum.near_top;
+
+    glm::vec3 corners[] = {
+        {aabb.min.x, aabb.min.y, aabb.min.z},
+        {aabb.max.x, aabb.min.y, aabb.min.z},
+        {aabb.min.x, aabb.max.y, aabb.min.z},
+        {aabb.min.x, aabb.min.y, aabb.max.z},
+    };
+
+    for (int i = 0; i < 4; i++) {
+        corners[i] = glm::vec3(world_to_view * glm::vec4(corners[i], 1.0f));
+    }
+
+    OBB obb;
+    obb.axes[0] = corners[1] - corners[0];
+    obb.axes[1] = corners[2] - corners[0];
+    obb.axes[2] = corners[3] - corners[0];
+    
+    obb.center = corners[0] + 0.5f * (obb.axes[0] + obb.axes[1] + obb.axes[2]);
+    
+    obb.extents = glm::vec3{ glm::length(obb.axes[0]), glm::length(obb.axes[1]), glm::length(obb.axes[2]) };
+    obb.axes[0] /= obb.extents.x;
+    obb.axes[1] /= obb.extents.y;
+    obb.axes[2] /= obb.extents.z;
+    obb.extents *= 0.5f;
+
+    {
+        float MoC = obb.center.z;
+        float radius = 0.0f;
+        for (int i = 0; i < 3; i++) radius += fabsf(obb.axes[i].z) * obb.extents[i];
+        
+        float obb_min = MoC - radius;
+        float obb_max = MoC + radius;
+        
+        if (obb_min > z_near || obb_max < z_far) return false;
+    }
+
+    {
+        const glm::vec3 M[] = {
+            { 0.0f, -z_near, y_near },
+            { 0.0f,  z_near, y_near },
+            { -z_near, 0.0f, x_near },
+            {  z_near, 0.0f, x_near },
+        };
+
+        for (int m = 0; m < 4; m++) {
+            float MoX = fabsf(M[m].x);
+            float MoY = fabsf(M[m].y);
+            float MoZ = M[m].z;
+            float MoC = glm::dot(M[m], obb.center);
+
+            float obb_radius = 0.0f;
+            for (int i = 0; i < 3; i++) {
+                obb_radius += fabsf(glm::dot(M[m], obb.axes[i])) * obb.extents[i];
+            }
+            float obb_min = MoC - obb_radius;
+            float obb_max = MoC + obb_radius;
+
+            float p = x_near * MoX + y_near * MoY;
+            float tau_0 = z_near * MoZ - p;
+            float tau_1 = z_near * MoZ + p;
+
+            if (tau_0 < 0.0f) tau_0 *= z_far / z_near;
+            if (tau_1 > 0.0f) tau_1 *= z_far / z_near;
+
+            if (obb_min > tau_1 || obb_max < tau_0) return false;
+        }
+    }
+
+    return true;
+}
+
 void S72Loader::update(float dt) {
 	time = std::fmod(time + dt, 60.0f);
 
@@ -1207,6 +1297,13 @@ void S72Loader::update(float dt) {
 			projection[1][1] *= -1.0f;
 
 			CLIP_FROM_WORLD = projection * view;
+
+			//frustum
+			active_frustum_props.near_plane = -props.near;
+			active_frustum_props.far_plane = -props.far;
+			
+			active_frustum_props.near_top = props.near * tanf(props.vfov * 0.5f);
+			active_frustum_props.near_right = active_frustum_props.near_top * props.aspect;
 
 		} else if (camera_mode == CameraMode::Free) {
 			glm::mat4 projection = glm::perspective(
@@ -1269,9 +1366,16 @@ void S72Loader::on_input(InputEvent const &evt) {
 
 	//general controls:
 	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_TAB) {
-		camera_mode = CameraMode((int(camera_mode) + 1) % 2);
-		return;
+		if (!camera_list.empty()) {
+            camera_mode = CameraMode::Scene;
+            current_camera_index = (current_camera_index + 1) % camera_list.size();
+            active_camera = camera_list[current_camera_index];
+        }
 	}
+
+	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_F) {
+        camera_mode = CameraMode::Free;
+    }
 
 	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_SLASH) {
 		isDebugMode = !isDebugMode;

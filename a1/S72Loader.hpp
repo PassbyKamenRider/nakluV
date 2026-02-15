@@ -120,12 +120,30 @@ struct S72Loader : RTG::Application {
 
     //-------------------------------------------------------------------
     //static scene resources:
+    struct CullingFrustum {
+        float near_right;
+        float near_top;
+        float near_plane;
+        float far_plane;
+    } active_frustum_props;
+
+    struct AABB
+    {
+        glm::vec3 min;
+        glm::vec3 max;
+    };
+
+    struct OBB {
+        glm::vec3 center = {};
+        glm::vec3 extents = {};
+        glm::vec3 axes[3] = {};
+    };
+
     Helpers::AllocatedBuffer object_vertices;
     struct ObjectVertices{
         uint32_t first = 0;
         uint32_t count = 0;
-        glm::vec3 min = glm::vec3(std::numeric_limits<float>::infinity());
-        glm::vec3 max = glm::vec3(-std::numeric_limits<float>::infinity());
+        AABB aabb;
     };
 
     std::vector<Helpers::AllocatedImage> textures;
@@ -216,10 +234,17 @@ struct S72Loader : RTG::Application {
     std::unordered_map<std::string, MaterialInstance> material_data; 
     std::unordered_map<std::string, CameraInstance> cameras;
 
+    std::vector<CameraInstance*> camera_list;
+    int current_camera_index = 0;
+
     std::vector<MeshInstance> mesh_instances;
     CameraInstance* active_camera = nullptr;
     bool isDebugMode = false;
 
     void traverse_scene(S72::Node* node, glm::mat4 const &parent_from_world);
     uint32_t load_texture(std::string path, S72::Texture::Format format);
+
+    // SAT test
+    // reference: https://bruop.github.io/improved_frustum_culling/
+    bool SAT_visibility_test(const CullingFrustum& frustum, const glm::mat4& vs_transform, const AABB& aabb);
 };
