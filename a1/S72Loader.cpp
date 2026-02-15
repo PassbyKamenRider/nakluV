@@ -15,13 +15,13 @@
 #include <fstream>
 #include <algorithm>
 
-void S72Loader::traverse_scene(S72::Node* node, mat4 const &parent_from_world) {
-    mat4 T = mat4_translation(node->translation.x, node->translation.y, node->translation.z);
-    mat4 R = mat4_rotation(node->rotation.x, node->rotation.y, node->rotation.z, node->rotation.w);
-    mat4 S = mat4_scale(node->scale.x, node->scale.y, node->scale.z);
+void S72Loader::traverse_scene(S72::Node* node, glm::mat4 const &parent_from_world) {
+    glm::mat4 T = glm::translate(glm::mat4(1.0f), node->translation);
+    glm::mat4 R = glm::mat4_cast(node->rotation);
+    glm::mat4 S = glm::scale(glm::mat4(1.0f), node->scale);
 
-    mat4 local_matrix = T * R * S;
-    mat4 world_matrix = parent_from_world * local_matrix;
+    glm::mat4 local_matrix = T * R * S;
+    glm::mat4 world_matrix = parent_from_world * local_matrix;
 
     if (node->mesh) {
         auto it = mesh_data.find(node->mesh->name);
@@ -29,40 +29,100 @@ void S72Loader::traverse_scene(S72::Node* node, mat4 const &parent_from_world) {
             ObjectInstance inst;
             inst.vertices = it->second;
             inst.transform.WORLD_FROM_LOCAL = world_matrix;
-            inst.transform.WORLD_FROM_LOCAL_NORMAL = world_matrix;
-			inst.texture = material_data.find(node->mesh->material->name)->second;
-
+            
+            inst.transform.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(world_matrix)); 
+            
+            auto mat_it = material_data.find(node->mesh->material->name);
+            inst.texture = (mat_it != material_data.end()) ? mat_it->second.texture_index : 0;
+            
             object_instances.emplace_back(inst);
+
+            if (isDebugMode) {
+                auto const& m_min = it->second.min; 
+                auto const& m_max = it->second.max;
+
+                std::array<glm::vec3, 8> world_corners;
+                for (uint32_t i = 0; i < 8; ++i) {
+                    glm::vec4 p_local = {
+                        (i & 1) ? m_max.x : m_min.x,
+                        (i & 2) ? m_max.y : m_min.y,
+                        (i & 4) ? m_max.z : m_min.z,
+                        1.0f
+                    };
+                    world_corners[i] = glm::vec3(world_matrix * p_local);
+                }
+
+                static const uint32_t indices[] = {
+                    0,1, 1,3, 3,2, 2,0, 4,5, 5,7, 7,6, 6,4, 0,4, 1,5, 2,6, 3,7
+                };
+
+                for (uint32_t idx : indices) {
+                    PosColVertex v;
+                    v.Position = { world_corners[idx].x, world_corners[idx].y, world_corners[idx].z };
+                    v.Color = { 0, 255, 0, 255 };
+                    lines_vertices.push_back(v);
+                }
+            }
         }
     }
 
-	if (node->camera) {
-		camera_to_world_matrix[node->camera->name] = world_matrix;
-	}
+    if (node->camera) {
+        auto cam_it = cameras.find(node->camera->name);
+        if (cam_it != cameras.end()) {
+            cam_it->second.world_from_local = world_matrix;
+        }
 
-	if (node->light) {
-		auto light = node->light;
-		if (std::holds_alternative<S72::Light::Sun>(light->source)) {
-			
-			float dx = world_matrix[8];
-			float dy = world_matrix[9];
-			float dz = world_matrix[10];
+        if (isDebugMode && node->camera->name == rtg.configuration.camera_name) {
+            if (std::holds_alternative<S72::Camera::Perspective>(node->camera->projection)) {
+                auto const& p_data = std::get<S72::Camera::Perspective>(node->camera->projection);
+                
+                float far_z = std::isfinite(p_data.far) ? p_data.far : 1000.0f;
+                glm::mat4 P = glm::perspective(p_data.vfov, p_data.aspect, p_data.near, far_z);
+                
+                glm::mat4 WORLD_FROM_CLIP = world_matrix * glm::inverse(P);
 
-			auto sun = std::get_if<S72::Light::Sun>(&light->source);
+                std::array<glm::vec4, 8> ndc_corners = {
+                    glm::vec4{-1,-1, 0, 1}, glm::vec4{ 1,-1, 0, 1}, glm::vec4{-1, 1, 0, 1}, glm::vec4{ 1, 1, 0, 1},
+                    glm::vec4{-1,-1, 1, 1}, glm::vec4{ 1,-1, 1, 1}, glm::vec4{-1, 1, 1, 1}, glm::vec4{ 1, 1, 1, 1}
+                };
 
-			float r = light->tint.r * sun->strength;
-			float g = light->tint.g * sun->strength;
-			float b = light->tint.b * sun->strength;
+                std::array<glm::vec3, 8> world_corners;
+                for (int i = 0; i < 8; ++i) {
+                    glm::vec4 p = WORLD_FROM_CLIP * ndc_corners[i];
+                    world_corners[i] = glm::vec3(p) / p.w;
+                }
 
-			if (sun->angle > 3.0f) { 
-				world.SKY_DIRECTION = { dx, dy, dz, 0.0f };
-				world.SKY_ENERGY = { r, g, b, 0.0f };
-			} else {
-				world.SUN_DIRECTION = { dx, dy, dz, 0.0f };
-				world.SUN_ENERGY = { r, g, b, 0.0f };
-			}
-		}
-	}
+                static const uint32_t f_indices[] = { 
+                    0,1, 1,3, 3,2, 2,0, 4,5, 5,7, 7,6, 6,4, 0,4, 1,5, 2,6, 3,7 
+                };
+
+                for (uint32_t idx : f_indices) {
+                    PosColVertex v;
+                    v.Position = { world_corners[idx].x, world_corners[idx].y, world_corners[idx].z };
+                    v.Color = { 255, 255, 0, 255 };
+                    lines_vertices.push_back(v);
+                }
+            }
+        }
+    }
+
+    if (node->light) {
+        auto const& light = *(node->light);
+        if (std::holds_alternative<S72::Light::Sun>(light.source)) {
+            glm::vec3 direction = glm::normalize(glm::vec3(world_matrix[2]));
+
+            auto const& sun = std::get<S72::Light::Sun>(light.source);
+            glm::vec3 energy = glm::vec3(light.tint.r, light.tint.g, light.tint.b) * sun.strength;
+
+            if (sun.angle > 3.0f) { 
+                world.SKY_DIRECTION = { direction.x, direction.y, direction.z, 0.0f };
+                world.SKY_ENERGY = { energy.r, energy.g, energy.b, 0.0f };
+            } else {
+                world.SUN_DIRECTION = { direction.x, direction.y, direction.z, 0.0f };
+                world.SUN_ENERGY = { energy.r, energy.g, energy.b, 0.0f };
+            }
+        }
+    }
 
     for (auto* child : node->children) {
         traverse_scene(child, world_matrix);
@@ -103,164 +163,114 @@ uint32_t S72Loader::load_texture(std::string path, S72::Texture::Format format) 
 
 S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_) {
 	try {
-		scene = S72::load(rtg_.configuration.scene_path);
-	} catch (std::exception &e) {
-		std::cerr << "Scene loading failed:\n" << e.what() << std::endl;
-	}
+        scene = S72::load(rtg_.configuration.scene_path);
+    } catch (std::exception &e) {
+        std::cerr << "Scene loading failed:\n" << e.what() << std::endl;
+    }
 
-	std::unordered_map<std::string, std::vector<char>> loaded_data;
+    std::unordered_map<std::string, std::vector<char>> loaded_data;
+    for (auto const& [src, datafile] : scene.data_files) {
+        std::ifstream file(datafile.path, std::ios::binary | std::ios::ate);
+        if (!file) throw std::runtime_error("Could not open data file: " + datafile.path);
+        std::streamsize size = file.tellg();
+        file.seekg(0, std::ios::beg);
+        std::vector<char> data(size);
+        file.read(data.data(), size);
+        loaded_data[src] = std::move(data);
+    }
 
-	for (auto const& [src, datafile] : scene.data_files) {
-		std::ifstream file(datafile.path, std::ios::binary | std::ios::ate);
-		
-		if (!file) {
-			throw std::runtime_error("Could not open data file: " + datafile.path);
-		}
+    for (auto& [name, cam] : scene.cameras) {
+        CameraInstance inst;
+        inst.props = std::get<S72::Camera::Perspective>(cam.projection);
+        cameras[name] = inst;
+        
+        if (name == rtg.configuration.camera_name) {
+            active_camera = &cameras[name];
+        }
+    }
 
-		std::streamsize size = file.tellg();
-		file.seekg(0, std::ios::beg);
+    if (active_camera == nullptr) {
+        camera_mode = CameraMode::Free;
+    }
 
-		std::vector<char> data(size);
-		if (file.read(data.data(), size)) {
-			loaded_data[src] = std::move(data);
-		}
-	}
+    std::vector<PosNorTexVertex> vertices;
+    for (auto const& [name, mesh] : scene.meshes) {
+        ObjectVertices info;
+        info.first = (uint32_t)(vertices.size());
+        info.count = mesh.count;
 
-	for (auto [name, cam] : scene.cameras) {
-		camera_to_props[name] = std::get<S72::Camera::Perspective>(cam.projection);
-		
-		if (name == rtg.configuration.camera_name) {
-			active_camera_name = name;
-		}
-	}
+        vertices.resize(info.first + info.count);
 
-	if (active_camera_name.empty()) {
-		camera_mode = CameraMode::Free;
-	}
+        if (auto it = mesh.attributes.find("POSITION"); it != mesh.attributes.end()) {
+            auto const& attr = it->second;
+            const char* src_ptr = loaded_data.at(attr.src.src).data() + attr.offset;
 
-	std::vector<PosNorTexVertex> vertices;
-	for (auto const& [name, mesh] : scene.meshes) {
-		ObjectVertices info;
-		info.first = (uint32_t) (vertices.size());
-		info.count = mesh.count;
+            for (uint32_t i = 0; i < mesh.count; ++i) {
+                glm::vec3 pos;
+				std::memcpy(&pos, src_ptr + i * attr.stride, sizeof(glm::vec3));
+				
+				vertices[info.first + i].Position = { pos.x, pos.y, pos.z };
 
-		vertices.resize(info.first + info.count);
+				info.min = glm::min(info.min, pos);
+				info.max = glm::max(info.max, pos);
+            }
+        }
 
-		if (auto it = mesh.attributes.find("POSITION"); it != mesh.attributes.end()) {
-			auto const& attr = it->second;
-			const char* src_ptr = loaded_data.at(attr.src.src).data() + attr.offset;
+        if (auto it = mesh.attributes.find("NORMAL"); it != mesh.attributes.end()) {
+            auto const& attr = it->second;
+            const char* src_ptr = loaded_data.at(attr.src.src).data() + attr.offset;
+            for (uint32_t i = 0; i < mesh.count; ++i) {
+                std::memcpy(&vertices[info.first + i].Normal, src_ptr + i * attr.stride, sizeof(glm::vec3));
+            }
+        }
 
-			for (uint32_t i = 0; i < mesh.count; ++i) {
-				std::memcpy(&vertices[info.first + i].Position, 
-							src_ptr + i * attr.stride, 
-							sizeof(PosNorTexVertex::Position));
-			}
-		}
+        if (auto it = mesh.attributes.find("TEXCOORD"); it != mesh.attributes.end()) {
+            auto const& attr = it->second;
+            const char* src_ptr = loaded_data.at(attr.src.src).data() + attr.offset;
+            for (uint32_t i = 0; i < mesh.count; ++i) {
+                std::memcpy(&vertices[info.first + i].TexCoord, src_ptr + i * attr.stride, sizeof(glm::vec2));
+                vertices[info.first + i].TexCoord.t = 1.0f - vertices[info.first + i].TexCoord.t;
+            }
+        }
+        mesh_data[name] = info;
+    }
 
-		if (auto it = mesh.attributes.find("NORMAL"); it != mesh.attributes.end()) {
-			auto const& attr = it->second;
-			const char* src_ptr = loaded_data.at(attr.src.src).data() + attr.offset;
+    std::unordered_map<std::string, uint32_t> path_to_texture_index;
+    for (auto const& [name, mat] : scene.materials) {
+        uint32_t tex_idx = 0;
+        auto handle_albedo = [&](auto const& albedo) {
+            if (auto const* const* tex_ptr = std::get_if<S72::Texture*>(&albedo)) {
+                const S72::Texture* tex = *tex_ptr;
+                if (tex) {
+                    if (path_to_texture_index.find(tex->src) == path_to_texture_index.end()) {
+                        path_to_texture_index[tex->src] = this->load_texture(tex->path, tex->format);
+                    }
+                    return path_to_texture_index[tex->src];
+                }
+            } else {
+                const auto& col = std::get<S72::color>(albedo);
+                uint8_t pixel[4] = { (uint8_t)(col.r * 255.0f), (uint8_t)(col.g * 255.0f), (uint8_t)(col.b * 255.0f), 255 };
+                textures.emplace_back(rtg.helpers.create_image({1,1}, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
+                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, Helpers::Unmapped));
+                rtg.helpers.transfer_to_image(pixel, 4, textures.back());
+                return (uint32_t)(textures.size() - 1);
+            }
+            return 0u;
+        };
 
-			for (uint32_t i = 0; i < mesh.count; ++i) {
-				std::memcpy(&vertices[info.first + i].Normal, 
-							src_ptr + i * attr.stride, 
-							sizeof(PosNorTexVertex::Normal));
-			}
-		}
+        if (auto const* pbr = std::get_if<S72::Material::PBR>(&mat.brdf)) {
+            tex_idx = handle_albedo(pbr->albedo);
+        } else if (auto const* lambert = std::get_if<S72::Material::Lambertian>(&mat.brdf)) {
+            tex_idx = handle_albedo(lambert->albedo);
+        }
+        material_data[name] = MaterialInstance{ .texture_index = tex_idx };
+    }
 
-		if (auto it = mesh.attributes.find("TEXCOORD"); it != mesh.attributes.end()) {
-			auto const& attr = it->second;
-			const char* src_ptr = loaded_data.at(attr.src.src).data() + attr.offset;
-
-			for (uint32_t i = 0; i < mesh.count; ++i) {
-				std::memcpy(&vertices[info.first + i].TexCoord, 
-							src_ptr + i * attr.stride, 
-							sizeof(PosNorTexVertex::TexCoord));
-			}
-		}
-
-		mesh_data[name] = info;
-	}
-
-	for (auto const& [name, mat] : scene.materials) {
-		uint32_t texture = 0;
-
-		if (auto const* pbr = std::get_if<S72::Material::PBR>(&mat.brdf)) {
-			if (auto const* const* tex_ptr = std::get_if<S72::Texture*>(&pbr->albedo)) {
-				const S72::Texture* tex = *tex_ptr;
-				if (tex) {
-					if (texture_data.find(tex->src) == texture_data.end()) {
-						texture_data[tex->src] = this->load_texture(tex->path, tex->format);
-					}
-					texture = texture_data[tex->src];
-				}
-			} else {
-				const auto& col = std::get<S72::color>(pbr->albedo);
-				uint8_t pixel[4] = {
-					(uint8_t)(col.r * 255.0f),
-					(uint8_t)(col.g * 255.0f),
-					(uint8_t)(col.b * 255.0f),
-					255
-				};
-
-				textures.emplace_back(
-					rtg.helpers.create_image(
-						{1, 1},
-						VK_FORMAT_R8G8B8A8_UNORM,
-						VK_IMAGE_TILING_OPTIMAL,
-						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-						Helpers::Unmapped
-					)
-				);
-
-				rtg.helpers.transfer_to_image(pixel, sizeof(pixel), textures.back());
-				texture = static_cast<uint32_t>(textures.size() - 1);
-			}
-		} else if (auto const* lambert = std::get_if<S72::Material::Lambertian>(&mat.brdf)) {
-			if (auto const* const* tex_ptr = std::get_if<S72::Texture*>(&lambert->albedo)) {
-				const S72::Texture* tex = *tex_ptr;
-				if (tex) {
-					if (texture_data.find(tex->src) == texture_data.end()) {
-						texture_data[tex->src] = this->load_texture(tex->path, tex->format);
-					}
-					texture = texture_data[tex->src];
-				}
-			} else {
-				const auto& col = std::get<S72::color>(lambert->albedo);
-				uint8_t pixel[4] = {
-					(uint8_t)(col.r * 255.0f),
-					(uint8_t)(col.g * 255.0f),
-					(uint8_t)(col.b * 255.0f),
-					255
-				};
-
-				textures.emplace_back(
-					rtg.helpers.create_image(
-						{1, 1},
-						VK_FORMAT_R8G8B8A8_UNORM,
-						VK_IMAGE_TILING_OPTIMAL,
-						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-						VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-						Helpers::Unmapped
-					)
-				);
-
-				rtg.helpers.transfer_to_image(pixel, sizeof(pixel), textures.back());
-				texture = static_cast<uint32_t>(textures.size() - 1);
-			}
-		}
-
-		material_data[name] = texture;
-	}
-
-	object_vertices = rtg.helpers.create_buffer(
+    object_vertices = rtg.helpers.create_buffer(
         vertices.size() * sizeof(PosNorTexVertex),
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        Helpers::Unmapped
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, Helpers::Unmapped
     );
-
     rtg.helpers.transfer_to_buffer(vertices.data(), vertices.size() * sizeof(PosNorTexVertex), object_vertices);
 
 	//select a depth format
@@ -825,6 +835,51 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 		VK( vkBeginCommandBuffer(workspace.command_buffer, &begin_info));
 	}
 
+	if (!lines_vertices.empty()) { //upload lines vertices:
+		//[re-]allocate lines buffers if needed:
+		size_t needed_bytes = lines_vertices.size() * sizeof(lines_vertices[0]);
+		if (workspace.lines_vertices_src.handle == VK_NULL_HANDLE || workspace.lines_vertices_src.size < needed_bytes) {
+			//round to next multiple of 4k to avoid re-allocating continuously if vertex count grows slowly:
+			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
+			if (workspace.lines_vertices_src.handle) {
+				rtg.helpers.destroy_buffer(std::move(workspace.lines_vertices_src));
+			}
+			if (workspace.lines_vertices.handle) {
+				rtg.helpers.destroy_buffer(std::move(workspace.lines_vertices));
+			}
+
+			workspace.lines_vertices_src = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT, //going to have GPU copy from this memory
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, //host-visible memory, coherent (no special sync needed)
+				Helpers::Mapped //get a pointer to the memory
+			);
+			workspace.lines_vertices = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, //going to use as vertex buffer, also going to have GPU into this memory
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, //GPU-local memory
+				Helpers::Unmapped //don't get a pointer to the memory
+			);
+
+			std::cout << "Re-allocated lines buffers to " << new_bytes << " bytes." << std::endl;
+		}
+
+		assert(workspace.lines_vertices_src.size == workspace.lines_vertices.size);
+		assert(workspace.lines_vertices_src.size >= needed_bytes);
+
+		//host-side copy into lines_vertices_src:
+		assert(workspace.lines_vertices_src.allocation.mapped);
+		std::memcpy(workspace.lines_vertices_src.allocation.data(), lines_vertices.data(), needed_bytes);
+
+		//device-side copy from lines_vertices_src -> lines_vertices:
+		VkBufferCopy copy_region{
+			.srcOffset = 0,
+			.dstOffset = 0,
+			.size = needed_bytes,
+		};
+		vkCmdCopyBuffer(workspace.command_buffer, workspace.lines_vertices_src.handle, workspace.lines_vertices.handle, 1, &copy_region);
+	}
+
 	if (!object_instances.empty()) {
 		size_t needed_bytes = object_instances.size() * sizeof(ObjectsPipeline::Transform);
 		if (workspace.Transforms_src.handle == VK_NULL_HANDLE || workspace.Transforms_src.size < needed_bytes) {
@@ -1002,6 +1057,34 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 			vkCmdDraw(workspace.command_buffer, 3, 1, 0, 0);
 		}
 
+		{ //draw with lines pipeline
+			if (!lines_vertices.empty()) {
+				vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, lines_pipeline.handle);
+
+				{
+					std::array<VkBuffer, 1> vertex_buffers{ workspace.lines_vertices.handle };
+					std::array<VkDeviceSize, 1> offsets { 0 };
+					vkCmdBindVertexBuffers(workspace.command_buffer, 0, uint32_t(vertex_buffers.size()), vertex_buffers.data(), offsets.data());
+				}
+
+				{
+					std::array<VkDescriptorSet, 1> descriptor_sets{
+						workspace.Camera_descriptors,
+					};
+					vkCmdBindDescriptorSets(
+						workspace.command_buffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						lines_pipeline.layout,
+						0,
+						uint32_t(descriptor_sets.size()), descriptor_sets.data(),
+						0, nullptr
+					);
+				}
+
+				vkCmdDraw(workspace.command_buffer, uint32_t(lines_vertices.size()), 1, 0, 0);
+			}
+		}
+
 		{
 			if (!object_instances.empty()) { //draw with the objects pipeline:
 				vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, objects_pipeline.handle);
@@ -1081,44 +1164,66 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params) {
 	}
 }
 
+//TODO:move this helper somewhere else
+inline glm::mat4 orbit(
+    float target_x, float target_y, float target_z,
+    float azimuth, float elevation, float radius
+) {
+    float ca = std::cos(azimuth); float sa = std::sin(azimuth);
+    float ce = std::cos(elevation); float se = std::sin(elevation);
+
+    glm::vec3 right = glm::vec3(-sa, ca, 0.0f);
+    glm::vec3 up    = glm::vec3(-se * ca, -se * sa, ce);
+    glm::vec3 out   = glm::vec3(ce * ca, ce * sa, se);
+
+    glm::vec3 target = glm::vec3(target_x, target_y, target_z);
+    glm::vec3 eye    = target + radius * out;
+
+    return glm::mat4(
+        right.x, up.x, out.x, 0.0f,
+        right.y, up.y, out.y, 0.0f,
+        right.z, up.z, out.z, 0.0f,
+        -glm::dot(right, eye), -glm::dot(up, eye), -glm::dot(out, eye), 1.0f
+    );
+}
+
 void S72Loader::update(float dt) {
 	time = std::fmod(time + dt, 60.0f);
 
 	{
-		if (camera_mode == CameraMode::Scene && !active_camera_name.empty()) {
-			auto const& props = camera_to_props[active_camera_name];
-			mat4 const& m = camera_to_world_matrix[active_camera_name];
+		if (camera_mode == CameraMode::Scene && active_camera != nullptr) {
+			auto const& props = active_camera->props; 
+			glm::mat4 const& m = active_camera->world_from_local;
 
-			float eye_x = m[12];
-			float eye_y = m[13];
-			float eye_z = m[14];
+			glm::vec3 eye = glm::vec3(m[3]);
+			glm::vec3 forward = -glm::vec3(m[2]); 
+			glm::vec3 up = glm::vec3(m[1]);
 
-			float target_x = eye_x - m[8];
-			float target_y = eye_y - m[9];
-			float target_z = eye_z - m[10];
-
-			float up_x = m[4];
-			float up_y = m[5];
-			float up_z = m[6];
-
-			mat4 view = look_at(eye_x, eye_y, eye_z, target_x, target_y, target_z, up_x, up_y, up_z);
+			glm::mat4 view = glm::lookAt(eye, eye + forward, up);
 
 			float aspect = rtg.swapchain_extent.width / (float)rtg.swapchain_extent.height;
-			mat4 projection = perspective(props.vfov, aspect, props.near, props.far);
+			glm::mat4 projection = glm::perspective(props.vfov, aspect, props.near, props.far);
+			
+			projection[1][1] *= -1.0f;
 
 			CLIP_FROM_WORLD = projection * view;
+
 		} else if (camera_mode == CameraMode::Free) {
-			CLIP_FROM_WORLD = perspective(
+			glm::mat4 projection = glm::perspective(
 				free_camera.fov,
 				rtg.swapchain_extent.width / float(rtg.swapchain_extent.height),
 				free_camera.near,
 				free_camera.far
-			) * orbit(
+			);
+
+			projection[1][1] *= -1.0f;
+			
+			glm::mat4 view = orbit(
 				free_camera.target_x, free_camera.target_y, free_camera.target_z,
 				free_camera.azimuth, free_camera.elevation, free_camera.radius
 			);
-		} else {
-			assert(0 && "only two camera modes");
+
+			CLIP_FROM_WORLD = projection * view;
 		}
 	}
 
@@ -1142,8 +1247,10 @@ void S72Loader::update(float dt) {
 
 	{ //objects
 		object_instances.clear();
+		lines_vertices.clear();
 
-		mat4 identity = mat4_identity();
+		glm::mat4 identity = glm::mat4(1.0f);
+		
 		for (auto* root_node : scene.scene.roots) {
 			traverse_scene(root_node, identity);
 		}
@@ -1163,6 +1270,11 @@ void S72Loader::on_input(InputEvent const &evt) {
 	//general controls:
 	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_TAB) {
 		camera_mode = CameraMode((int(camera_mode) + 1) % 2);
+		return;
+	}
+
+	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_SLASH) {
+		isDebugMode = !isDebugMode;
 		return;
 	}
 
@@ -1196,15 +1308,15 @@ void S72Loader::on_input(InputEvent const &evt) {
 					float dy =-(evt.motion.y - init_y) / rtg.swapchain_extent.height * height;
 
 					//compute camera transform to extract right (first row) and up (second row):
-					mat4 camera_from_world = orbit(
+					glm::mat4 camera_from_world = orbit(
 						init_camera.target_x, init_camera.target_y, init_camera.target_z,
 						init_camera.azimuth, init_camera.elevation, init_camera.radius
 					);
 
 					//move the desired distance:
-					free_camera.target_x = init_camera.target_x - dx * camera_from_world[0] - dy * camera_from_world[1];
-					free_camera.target_y = init_camera.target_y - dx * camera_from_world[4] - dy * camera_from_world[5];
-					free_camera.target_z = init_camera.target_z - dx * camera_from_world[8] - dy * camera_from_world[9];
+					free_camera.target_x = init_camera.target_x - dx * camera_from_world[0][0] - dy * camera_from_world[1][0];
+					free_camera.target_y = init_camera.target_y - dx * camera_from_world[0][1] - dy * camera_from_world[1][1];
+					free_camera.target_z = init_camera.target_z - dx * camera_from_world[0][2] - dy * camera_from_world[1][2];
 					return;
 				}
 			};

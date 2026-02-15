@@ -10,6 +10,9 @@ static_assert(sizeof(mat4) == 16 * 4, "mat4 is exactly 16 32-bit floats.");
 using vec4 = std::array<float, 4>;
 static_assert(sizeof(vec4) == 4 * 4, "vec4 is exactly 4 32-bit floats.");
 
+using vec3 = std::array<float, 3>;
+static_assert(sizeof(vec3) == 3 * 4, "vec3 is exactly 3 32-bit floats.");
+
 inline vec4 operator*(mat4 const &A, vec4 const &b) {
     vec4 ret;
     for (uint32_t r = 0; r < 4; ++r) {
@@ -135,41 +138,5 @@ inline mat4 orbit(
 		right_y, up_y, out_y, 0.0f,
 		right_z, up_z, out_z, 0.0f,
 		-right_dot_eye, -up_dot_eye, -out_dot_eye, 1.0f,
-	};
-}
-
-inline mat4 mat4_translation(float x, float y, float z) {
-    return mat4{
-        1,0,0,0, 
-        0,1,0,0, 
-        0,0,1,0, 
-        x,y,z,1
-    };
-}
-
-inline mat4 mat4_scale(float x, float y, float z) {
-    return mat4{
-        x,0,0,0, 
-        0,y,0,0, 
-        0,0,z,0, 
-        0,0,0,1
-    };
-}
-
-inline mat4 mat4_rotation(float x, float y, float z, float w) {
-    return mat4{
-        1.0f - 2.0f*y*y - 2.0f*z*z, 2.0f*x*y + 2.0f*z*w,        2.0f*x*z - 2.0f*y*w,        0.0f,
-        2.0f*x*y - 2.0f*z*w,        1.0f - 2.0f*x*x - 2.0f*z*z, 2.0f*y*z + 2.0f*x*w,        0.0f,
-        2.0f*x*z + 2.0f*y*w,        2.0f*y*z - 2.0f*x*w,        1.0f - 2.0f*x*x - 2.0f*y*y, 0.0f,
-        0.0f,                       0.0f,                       0.0f,                       1.0f
-    };
-}
-
-inline mat4 mat4_identity() {
-    return mat4{
-		1,0,0,0,
-		0,1,0,0,
-		0,0,1,0,
-		0,0,0,1
 	};
 }
