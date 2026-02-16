@@ -16,12 +16,11 @@
 #include <algorithm>
 
 void S72Loader::traverse_scene(S72::Node* node, glm::mat4 const &parent_from_world) {
-    glm::mat4 T = glm::translate(glm::mat4(1.0f), node->translation);
-    glm::mat4 R = glm::mat4_cast(node->rotation);
-    glm::mat4 S = glm::scale(glm::mat4(1.0f), node->scale);
-
-    glm::mat4 local_matrix = T * R * S;
-    glm::mat4 world_matrix = parent_from_world * local_matrix;
+	glm::mat4 world_matrix = parent_from_world * (
+        glm::translate(glm::mat4(1.0f), node->translation) *
+        glm::mat4_cast(node->rotation) *
+        glm::scale(glm::mat4(1.0f), node->scale)
+    );
 
     if (node->mesh) {
         auto it = mesh_data.find(node->mesh->name);
@@ -29,13 +28,13 @@ void S72Loader::traverse_scene(S72::Node* node, glm::mat4 const &parent_from_wor
             ObjectInstance inst;
             inst.vertices = it->second;
             inst.transform.WORLD_FROM_LOCAL = world_matrix;
-            
+
             inst.transform.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(world_matrix)); 
             
             auto mat_it = material_data.find(node->mesh->material->name);
             inst.texture = (mat_it != material_data.end()) ? mat_it->second.texture_index : 0;
             
-			if (camera_mode == CameraMode::Scene) {
+			if (rtg.configuration.culling) {
 				glm::mat4 view_from_world = glm::inverse(active_camera->world_from_local);
 				glm::mat4 vs_transform = view_from_world * world_matrix;
 
@@ -88,7 +87,7 @@ void S72Loader::traverse_scene(S72::Node* node, glm::mat4 const &parent_from_wor
             cam_it->second.world_from_local = world_matrix;
         }
 
-        if (isDebugMode && node->camera->name == rtg.configuration.camera_name) {
+        if (isDebugMode) {
             auto const& p_data = std::get<S72::Camera::Perspective>(node->camera->projection);
 
 			glm::mat4 P = glm::perspective(p_data.vfov, p_data.aspect, p_data.near, p_data.far);
@@ -174,6 +173,44 @@ uint32_t S72Loader::load_texture(std::string path, S72::Texture::Format format) 
     return (uint32_t)(textures.size() - 1);
 }
 
+void S72Loader::update_animations(float current_time) {
+    for (auto &driver : scene.drivers) {
+        uint32_t left_idx = 0;
+        while (left_idx + 1 < driver.times.size() && driver.times[left_idx + 1] <= current_time) {
+            left_idx++;
+        }
+        uint32_t right_idx = (left_idx + 1 < driver.times.size()) ? left_idx + 1 : left_idx;
+
+        float alpha = 0.0f;
+        if (left_idx != right_idx) {
+            alpha = (current_time - driver.times[left_idx]) / (driver.times[right_idx] - driver.times[left_idx]);
+        }
+        
+        if (driver.interpolation == S72::Driver::Interpolation::STEP) alpha = 0.0f;
+
+        if (driver.channel == S72::Driver::Channel::translation) {
+            glm::vec3 v1 = glm::make_vec3(driver.values.data() + (3 * left_idx));
+            glm::vec3 v2 = glm::make_vec3(driver.values.data() + (3 * right_idx));
+            driver.node.translation = glm::mix(v1, v2, alpha);
+        } 
+        else if (driver.channel == S72::Driver::Channel::scale) {
+            glm::vec3 v1 = glm::make_vec3(driver.values.data() + (3 * left_idx));
+            glm::vec3 v2 = glm::make_vec3(driver.values.data() + (3 * right_idx));
+            driver.node.scale = glm::mix(v1, v2, alpha);
+        } 
+        else if (driver.channel == S72::Driver::Channel::rotation) {
+            glm::quat q1 = glm::make_quat(driver.values.data() + (4 * left_idx));
+            glm::quat q2 = glm::make_quat(driver.values.data() + (4 * right_idx));
+
+            if (driver.interpolation == S72::Driver::Interpolation::SLERP) {
+                driver.node.rotation = glm::slerp(q1, q2, alpha);
+            } else {
+                driver.node.rotation = glm::normalize(glm::lerp(q1, q2, alpha));
+            }
+        }
+    }
+}
+
 S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_) {
 	try {
         scene = S72::load(rtg_.configuration.scene_path);
@@ -205,13 +242,16 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_) {
 
     if (active_camera == nullptr) {
         camera_mode = CameraMode::Free;
-    }
+		active_camera = camera_list.empty() ? nullptr : camera_list[0];
+	}
 
     std::vector<PosNorTexVertex> vertices;
     for (auto const& [name, mesh] : scene.meshes) {
         ObjectVertices info;
         info.first = (uint32_t)(vertices.size());
         info.count = mesh.count;
+		info.aabb.min = glm::vec3( std::numeric_limits<float>::infinity());
+		info.aabb.max = glm::vec3(-std::numeric_limits<float>::infinity());
 
         vertices.resize(info.first + info.count);
 
@@ -248,7 +288,7 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_) {
         }
         mesh_data[name] = info;
     }
-
+	
     std::unordered_map<std::string, uint32_t> path_to_texture_index;
     for (auto const& [name, mat] : scene.materials) {
         uint32_t tex_idx = 0;
@@ -1280,6 +1320,10 @@ bool S72Loader::SAT_visibility_test(const CullingFrustum& frustum, const glm::ma
 void S72Loader::update(float dt) {
 	time = std::fmod(time + dt, 60.0f);
 
+	update_animations(playback_time);
+
+    playback_time += dt;
+
 	{
 		if (camera_mode == CameraMode::Scene && active_camera != nullptr) {
 			auto const& props = active_camera->props; 
@@ -1379,7 +1423,10 @@ void S72Loader::on_input(InputEvent const &evt) {
 
 	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_SLASH) {
 		isDebugMode = !isDebugMode;
-		return;
+	}
+
+	if (evt.type == InputEvent::KeyDown && evt.key.key == GLFW_KEY_SPACE) {
+		playback_time = 0.0f;
 	}
 
 	//free camera controls:

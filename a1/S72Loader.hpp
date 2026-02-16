@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 struct S72Loader : RTG::Application {
     S72Loader(RTG &);
@@ -225,6 +226,7 @@ struct S72Loader : RTG::Application {
     };
 
     struct CameraInstance {
+        std::string name;
         S72::Camera::Perspective props;
         glm::mat4 world_from_local = glm::mat4(1.0f);
     };
@@ -240,6 +242,9 @@ struct S72Loader : RTG::Application {
     std::vector<MeshInstance> mesh_instances;
     CameraInstance* active_camera = nullptr;
     bool isDebugMode = false;
+
+    float playback_time = 0.0f;
+    void update_animations(float current_time);
 
     void traverse_scene(S72::Node* node, glm::mat4 const &parent_from_world);
     uint32_t load_texture(std::string path, S72::Texture::Format format);

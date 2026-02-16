@@ -1,0 +1,97 @@
+[
+  "s72-v2",
+  {
+    "type": "MATERIAL",
+    "name": "pbr:Cube",
+    "pbr": {
+      "albedo": [0.800007, 0.000426565, 0],
+      "roughness": 0.5,
+      "metalness": 0
+    }
+  },
+  {
+    "type": "MESH",
+    "name": "Cube",
+    "topology": "TRIANGLE_LIST",
+    "count": 2359296,
+    "attributes": {
+      "POSITION": { "src": "gpu_heavy.Cube.pnTt.b72", "offset": 0, "stride": 48, "format": "R32G32B32_SFLOAT" },
+      "NORMAL": { "src": "gpu_heavy.Cube.pnTt.b72", "offset": 12, "stride": 48, "format": "R32G32B32_SFLOAT" },
+      "TANGENT": { "src": "gpu_heavy.Cube.pnTt.b72", "offset": 24, "stride": 48, "format": "R32G32B32A32_SFLOAT" },
+      "TEXCOORD": { "src": "gpu_heavy.Cube.pnTt.b72", "offset": 40, "stride": 48, "format": "R32G32_SFLOAT" }
+    },
+    "material": "pbr:Cube"
+  },
+  {
+    "type": "NODE",
+    "name": "Cube_Center",
+    "translation": [0, 0, 0],
+    "rotation": [0, 0, 0, 1],
+    "scale": [1, 1, 1],
+    "mesh": "Cube"
+  },
+  {
+    "type": "NODE",
+    "name": "Cube_Right",
+    "translation": [3.0, 0, 0],
+    "rotation": [0, 0, 0, 1],
+    "scale": [1, 1, 1],
+    "mesh": "Cube"
+  },
+  {
+    "type": "NODE",
+    "name": "Cube_Left",
+    "translation": [-3.0, 0, 0],
+    "rotation": [0, 0, 0, 1],
+    "scale": [1, 1, 1],
+    "mesh": "Cube"
+  },
+  {
+    "type": "NODE",
+    "name": "Cube_Top",
+    "translation": [0, 3.0, 0],
+    "rotation": [0, 0, 0, 1],
+    "scale": [1, 1, 1],
+    "mesh": "Cube"
+  },
+  {
+    "type": "LIGHT",
+    "name": "Light",
+    "tint": [1, 1, 1],
+    "sphere": {
+      "radius": 0.1,
+      "power": 1000
+    }
+  },
+  {
+    "type": "NODE",
+    "name": "Light",
+    "translation": [0, 0, 5.90386],
+    "rotation": [0, 0, 0, 1],
+    "scale": [1, 1, 1],
+    "light": "Light"
+  },
+  {
+    "type": "CAMERA",
+    "name": "Camera",
+    "perspective": {
+      "aspect": 1.77778,
+      "vfov": 0.47109,
+      "near": 0.1,
+      "far": 100
+    }
+  },
+  {
+    "type": "NODE",
+    "name": "Camera",
+    "translation": [7.35889, -6.92579, 4.95831],
+    "rotation": [0.5753, 0.4926, 0.1255, 0.6396],
+    "scale": [1, 1, 1],
+    "camera": "Camera"
+  },
+  {
+    "type": "SCENE",
+    "name": "gpu_heavy.blend",
+    "roots": ["Cube_Center", "Cube_Right", "Cube_Left", "Cube_Top", "Light", "Camera"]
+  }
+]

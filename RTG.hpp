@@ -62,6 +62,8 @@ struct RTG {
 		std::string scene_path = "";
 		//if set, use this camera from the scene as the active camera:
 		std::string camera_name = "";
+		//if set, enable culling
+		bool culling = false;
 
 		//requested (priority-ranked) formats for output surface: (will use first available)
 		std::vector< VkSurfaceFormatKHR > surface_formats{

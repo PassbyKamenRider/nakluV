@@ -58,6 +58,19 @@ void RTG::Configuration::parse(int argc, char **argv) {
             }
 			argi += 1;
 			camera_name = argv[argi];
+		} else if (arg == "--culling") {
+			if (argi + 1 >= argc) {
+                throw std::runtime_error("--culling requires a parameter (a culling mode).");
+            }
+			argi += 1;
+			std::string culling_mode = argv[argi];
+			if (culling_mode == "none") {
+				culling = false;
+			} else if (culling_mode == "frustum") {
+				culling = true;
+			} else {
+				throw std::runtime_error("Unrecognized culling mode '" + culling_mode + "'.");
+			}
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");
 		}
@@ -952,7 +965,13 @@ void RTG::run(Application &application) {
 			//in headless mode, override dt:
 			if (configuration.headless) dt = headless_dt;
 
+			// auto cpu_start = std::chrono::high_resolution_clock::now();
+
 			application.update(dt);
+
+			// auto cpu_end = std::chrono::high_resolution_clock::now();
+			// double update_ms = std::chrono::duration<double>(cpu_end - cpu_start).count() * 1000.0;
+			// std::cout << "CPU update took " << update_ms << " ms." << std::endl;
 		}
 
 		uint32_t workspace_index;
