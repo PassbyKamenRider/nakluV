@@ -126,7 +126,7 @@ struct S72Loader : RTG::Application {
         float near_top;
         float near_plane;
         float far_plane;
-    } active_frustum_props;
+    } active_frustum;
 
     struct AABB
     {
