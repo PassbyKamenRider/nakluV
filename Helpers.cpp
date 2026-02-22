@@ -111,13 +111,15 @@ void Helpers::destroy_buffer(AllocatedBuffer &&buffer) {
 }
 
 
-Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map) {
+Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map, uint32_t layers, VkImageCreateFlags flags) {
 	AllocatedImage image;
 	image.extent = extent;
 	image.format = format;
+	image.layers = layers;
 
 	VkImageCreateInfo create_info{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.flags = flags,
 		.imageType = VK_IMAGE_TYPE_2D,
 		.format = format,
 		.extent{
@@ -126,7 +128,7 @@ Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat
 			.depth = 1
 		},
 		.mipLevels = 1,
-		.arrayLayers = 1,
+		.arrayLayers = layers,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
 		.tiling = tiling,
 		.usage = usage,
@@ -213,7 +215,7 @@ void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &t
 	//check data is the right size [new]
 	size_t bytes_per_block = vkuFormatTexelBlockSize(target.format);
 	size_t texels_per_block = vkuFormatTexelsPerBlock(target.format);
-	assert(size == target.extent.width * target.extent.height * bytes_per_block / texels_per_block);
+	assert(size == target.layers * target.extent.width * target.extent.height * bytes_per_block / texels_per_block);
 
 	//create a host-coherent source buffer
 	AllocatedBuffer transfer_src = create_buffer(
@@ -241,7 +243,7 @@ void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &t
 		.baseMipLevel = 0,
 		.levelCount = 1,
 		.baseArrayLayer = 0,
-		.layerCount = 1,
+		.layerCount = target.layers,
 	};
 
 	{ //put the receiving image in destination-optimal layout
@@ -277,7 +279,7 @@ void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &t
 				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 				.mipLevel = 0,
 				.baseArrayLayer = 0,
-				.layerCount = 1,
+				.layerCount = target.layers,
 			},
 			.imageOffset{ .x = 0, .y = 0, .z = 0 },
 			.imageExtent{
