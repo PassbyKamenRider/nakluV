@@ -63,13 +63,38 @@ void RTG::Configuration::parse(int argc, char **argv) {
                 throw std::runtime_error("--culling requires a parameter (a culling mode).");
             }
 			argi += 1;
+
 			std::string culling_mode = argv[argi];
+
 			if (culling_mode == "none") {
 				culling = false;
 			} else if (culling_mode == "frustum") {
 				culling = true;
 			} else {
 				throw std::runtime_error("Unrecognized culling mode '" + culling_mode + "'.");
+			}
+		} else if (arg == "--exposure") {
+			if (argi + 1 >= argc) {
+				throw std::runtime_error("--exposure requires a parameter (an exposure value).");
+			}
+			argi += 1;
+
+			exposure = std::stof(argv[argi]);
+		} else if (arg == "--tone-map") {
+			if (argi + 1 >= argc) {
+				throw std::runtime_error("--tone-mapping requires a parameter (a tone mapping mode).");
+			}
+			argi += 1;
+			
+			std::string mode = argv[argi];
+
+			if (mode == "linear") {
+				tone_mapping_mode = 0;
+			} else if (mode == "reinhard") {
+				tone_mapping_mode = 1;
+			} else {
+				std::cerr << "Unknown tone map mode " << mode << ", set to linear." << std::endl;
+				tone_mapping_mode = 0;
 			}
 		} else {
 			throw std::runtime_error("Unrecognized argument '" + arg + "'.");

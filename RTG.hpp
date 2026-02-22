@@ -64,6 +64,10 @@ struct RTG {
 		std::string camera_name = "";
 		//if set, enable culling
 		bool culling = false;
+		// exposure
+		float exposure = 0.0f;
+		// tone mapping mode (0 = linear, 1 = reinhard)
+		int tone_mapping_mode = 0;
 
 		//requested (priority-ranked) formats for output surface: (will use first available)
 		std::vector< VkSurfaceFormatKHR > surface_formats{
