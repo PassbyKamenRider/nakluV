@@ -209,7 +209,7 @@ void Helpers::transfer_to_buffer(void const *data, size_t size, AllocatedBuffer 
 	destroy_buffer(std::move(transfer_src));
 }
 
-void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &target) {
+void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &target, VkImageLayout final_layout) {
 	assert(target.handle != VK_NULL_HANDLE);
 
 	//check data is the right size [new]
@@ -252,7 +252,7 @@ void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &t
 			.srcAccessMask = 0,
 			.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
 			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-			.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			.newLayout = final_layout,
 			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.image = target.handle,
@@ -301,12 +301,24 @@ void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &t
 	}
 
 	{ // transition the image memory to shader-read-only-optimal layout:
+		VkAccessFlags dst_access = 0;
+		VkPipelineStageFlags dst_stage = 0;
+
+		if (final_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+			dst_access = VK_ACCESS_SHADER_READ_BIT;
+			dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
+		else if (final_layout == VK_IMAGE_LAYOUT_GENERAL) {
+			dst_access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+			dst_stage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		}
+
 		VkImageMemoryBarrier barrier{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
 			.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+			.dstAccessMask = dst_access,
 			.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			.newLayout = final_layout,
 			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.image = target.handle,
@@ -316,7 +328,7 @@ void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &t
 		vkCmdPipelineBarrier(
 			transfer_command_buffer,
 			VK_PIPELINE_STAGE_TRANSFER_BIT,
-			VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			dst_stage,
 			0,
 			0, nullptr,
 			0, nullptr,
