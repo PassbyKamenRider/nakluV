@@ -224,8 +224,8 @@ struct S72Loader : RTG::Application {
         int32_t normal_index = 1; //default is textures[1]
         int32_t displacement_idx = 0;
         int32_t albedo_index = 0; //default is textures[0]
-        int32_t roughness_index = 0;
-        int32_t metalness_index = 0;
+        int32_t roughness_index = 2; //default is textures[2]
+        int32_t metalness_index = 3; //default is textures[3]
 
         VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
     };
