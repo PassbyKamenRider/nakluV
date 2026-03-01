@@ -111,41 +111,46 @@ void Helpers::destroy_buffer(AllocatedBuffer &&buffer) {
 }
 
 
-Helpers::AllocatedImage Helpers::create_image(VkExtent2D const &extent, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, MapFlag map, uint32_t layers, VkImageCreateFlags flags) {
-	AllocatedImage image;
-	image.extent = extent;
-	image.format = format;
-	image.layers = layers;
+Helpers::AllocatedImage Helpers::create_image(
+    VkExtent2D const &extent, 
+    VkFormat format, 
+    VkImageTiling tiling, 
+    VkImageUsageFlags usage, 
+    VkMemoryPropertyFlags properties, 
+    MapFlag map, 
+    uint32_t layers, 
+    VkImageCreateFlags flags, 
+    uint32_t mip_levels
+) {
+    AllocatedImage image;
+    image.extent = extent;
+    image.format = format;
+    image.layers = layers;
+	image.mip_levels = mip_levels;
 
-	VkImageCreateInfo create_info{
-		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.flags = flags,
-		.imageType = VK_IMAGE_TYPE_2D,
-		.format = format,
-		.extent{
-			.width = extent.width,
-			.height = extent.height,
-			.depth = 1
-		},
-		.mipLevels = 1,
-		.arrayLayers = layers,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.tiling = tiling,
-		.usage = usage,
-		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-	};
+    VkImageCreateInfo create_info{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .flags = flags,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = format,
+        .extent{ .width = extent.width, .height = extent.height, .depth = 1 },
+        .mipLevels = mip_levels,
+        .arrayLayers = layers,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = tiling,
+        .usage = usage,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
 
-	VK(vkCreateImage(rtg.device, &create_info, nullptr, &image.handle));
+    VK(vkCreateImage(rtg.device, &create_info, nullptr, &image.handle));
 
-	VkMemoryRequirements req;
-	vkGetImageMemoryRequirements(rtg.device, image.handle, &req);
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(rtg.device, image.handle, &req);
+    image.allocation = allocate(req, properties, map);
+    VK(vkBindImageMemory(rtg.device, image.handle, image.allocation.handle, image.allocation.offset));
 
-	image.allocation = allocate(req, properties, map);
-
-	VK(vkBindImageMemory(rtg.device, image.handle, image.allocation.handle, image.allocation.offset));
-
-	return image;
+    return image;
 }
 
 void Helpers::destroy_image(AllocatedImage &&image) {
@@ -209,149 +214,136 @@ void Helpers::transfer_to_buffer(void const *data, size_t size, AllocatedBuffer 
 	destroy_buffer(std::move(transfer_src));
 }
 
-void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &target, VkImageLayout final_layout) {
-	assert(target.handle != VK_NULL_HANDLE);
+void Helpers::transfer_to_image(void const *data, size_t size, AllocatedImage &target, VkImageLayout final_layout, uint32_t mip_level) {
+    assert(target.handle != VK_NULL_HANDLE);
 
-	//check data is the right size [new]
-	size_t bytes_per_block = vkuFormatTexelBlockSize(target.format);
-	size_t texels_per_block = vkuFormatTexelsPerBlock(target.format);
-	assert(size == target.layers * target.extent.width * target.extent.height * bytes_per_block / texels_per_block);
+    uint32_t level_width  = std::max(1u, target.extent.width  >> mip_level);
+    uint32_t level_height = std::max(1u, target.extent.height >> mip_level);
 
-	//create a host-coherent source buffer
-	AllocatedBuffer transfer_src = create_buffer(
-		size,
-		VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-		Mapped
-	);
+    size_t bytes_per_block = vkuFormatTexelBlockSize(target.format);
+    size_t texels_per_block = vkuFormatTexelsPerBlock(target.format);
+    assert(size == target.layers * level_width * level_height * bytes_per_block / texels_per_block);
 
-	//copy image data into the source buffer
-	std::memcpy(transfer_src.allocation.data(), data, size);
+    AllocatedBuffer transfer_src = create_buffer(
+        size,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        Mapped
+    );
 
-	//begin recording a command buffer
-	VK( vkResetCommandBuffer(transfer_command_buffer, 0) );
+    std::memcpy(transfer_src.allocation.data(), data, size);
 
-	VkCommandBufferBeginInfo begin_info{
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-	};
+    VK( vkResetCommandBuffer(transfer_command_buffer, 0) );
 
-	VK( vkBeginCommandBuffer(transfer_command_buffer, &begin_info) );
+    VkCommandBufferBeginInfo begin_info{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
 
-	VkImageSubresourceRange whole_image{
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.baseMipLevel = 0,
-		.levelCount = 1,
-		.baseArrayLayer = 0,
-		.layerCount = target.layers,
-	};
+    VK( vkBeginCommandBuffer(transfer_command_buffer, &begin_info) );
 
-	{ //put the receiving image in destination-optimal layout
-		VkImageMemoryBarrier barrier{
-			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-			.srcAccessMask = 0,
-			.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-			.newLayout = final_layout,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = target.handle,
-			.subresourceRange = whole_image,
-		};
+    VkImageSubresourceRange current_mip_range{
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel = mip_level,
+        .levelCount = 1,
+        .baseArrayLayer = 0,
+        .layerCount = target.layers,
+    };
 
-		vkCmdPipelineBarrier(
-			transfer_command_buffer,
-			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-			VK_PIPELINE_STAGE_TRANSFER_BIT,
-			0,
-			0, nullptr,
-			0, nullptr,
-			1, &barrier
-		);
-	}
+    {
+        VkImageMemoryBarrier barrier{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = target.handle,
+            .subresourceRange = current_mip_range,
+        };
 
-	{ // copy the source buffer to the image
-		VkBufferImageCopy region{
-			.bufferOffset = 0,
-			.bufferRowLength = target.extent.width,
-			.bufferImageHeight = target.extent.height,
-			.imageSubresource{
-				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-				.mipLevel = 0,
-				.baseArrayLayer = 0,
-				.layerCount = target.layers,
-			},
-			.imageOffset{ .x = 0, .y = 0, .z = 0 },
-			.imageExtent{
-				.width = target.extent.width,
-				.height = target.extent.height,
-				.depth = 1
-			},
-		};
+        vkCmdPipelineBarrier(
+            transfer_command_buffer,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &barrier
+        );
+    }
 
-		vkCmdCopyBufferToImage(
-			transfer_command_buffer,
-			transfer_src.handle,
-			target.handle,
-			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			1, &region
-		);
+    {
+        VkBufferImageCopy region{
+            .bufferOffset = 0,
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0, 
+            .imageSubresource{
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel = mip_level,
+                .baseArrayLayer = 0,
+                .layerCount = target.layers,
+            },
+            .imageOffset{ .x = 0, .y = 0, .z = 0 },
+            .imageExtent{
+                .width = level_width,
+                .height = level_height,
+                .depth = 1
+            },
+        };
 
-		//NOTE: if image had mip levels, would need to copy as additional regions here.
-	}
+        vkCmdCopyBufferToImage(
+            transfer_command_buffer,
+            transfer_src.handle,
+            target.handle,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1, &region
+        );
+    }
 
-	{ // transition the image memory to shader-read-only-optimal layout:
-		VkAccessFlags dst_access = 0;
-		VkPipelineStageFlags dst_stage = 0;
+    {
+        VkAccessFlags dst_access = 0;
+        VkPipelineStageFlags dst_stage = 0;
 
-		if (final_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-			dst_access = VK_ACCESS_SHADER_READ_BIT;
-			dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-		}
-		else if (final_layout == VK_IMAGE_LAYOUT_GENERAL) {
-			dst_access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-			dst_stage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-		}
+        if (final_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+            dst_access = VK_ACCESS_SHADER_READ_BIT;
+            dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        }
+        else if (final_layout == VK_IMAGE_LAYOUT_GENERAL) {
+            dst_access = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            dst_stage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        }
 
-		VkImageMemoryBarrier barrier{
-			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-			.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-			.dstAccessMask = dst_access,
-			.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			.newLayout = final_layout,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = target.handle,
-			.subresourceRange = whole_image,
-		};
+        VkImageMemoryBarrier barrier{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = dst_access,
+            .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .newLayout = final_layout,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = target.handle,
+            .subresourceRange = current_mip_range,
+        };
 
-		vkCmdPipelineBarrier(
-			transfer_command_buffer,
-			VK_PIPELINE_STAGE_TRANSFER_BIT,
-			dst_stage,
-			0,
-			0, nullptr,
-			0, nullptr,
-			1, &barrier
-		);
-	}
+        vkCmdPipelineBarrier(
+            transfer_command_buffer,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            dst_stage,
+            0, 0, nullptr, 0, nullptr, 1, &barrier
+        );
+    }
 
-	//end and submit the command buffer
-	VK( vkEndCommandBuffer(transfer_command_buffer) );
+    VK( vkEndCommandBuffer(transfer_command_buffer) );
 
-	VkSubmitInfo submit_info{
-		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		.commandBufferCount = 1,
-		.pCommandBuffers = &transfer_command_buffer
-	};
+    VkSubmitInfo submit_info{
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &transfer_command_buffer
+    };
 
-	VK( vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, VK_NULL_HANDLE) );
+    VK( vkQueueSubmit(rtg.graphics_queue, 1, &submit_info, VK_NULL_HANDLE) );
+    VK( vkQueueWaitIdle(rtg.graphics_queue) );
 
-	//wait for command buffer to finish executing
-	VK( vkQueueWaitIdle(rtg.graphics_queue) );
-
-	//destroy the source buffer
-	destroy_buffer(std::move(transfer_src));
+    destroy_buffer(std::move(transfer_src));
 }
 
 //----------------------------
