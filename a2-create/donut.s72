@@ -1,0 +1,215 @@
+["s72-v2",
+{
+
+	"type":"LIGHT",
+	"name":"Light",
+	"tint":[1, 1, 1],
+	"sphere":{
+		"radius":0.1,
+		"power":1000
+	}
+},
+{
+	"type":"NODE",
+	"name":"Light",
+	"translation":[4.07625,1.00545,5.90386],
+	"rotation":[0.169076,0.272171,0.75588,0.570948],
+	"scale":[1,1,1],
+	"light":"Light"
+},
+{
+
+	"type":"CAMERA",
+	"name":"Camera",
+	"perspective":{
+		"aspect":1.77778,
+		"vfov":0.47109,
+		"near":0.1,
+		"far":100
+	}
+},
+{
+	"type":"NODE",
+	"name":"Camera",
+	"translation":[1.71108,-1.49554,1.28577],
+	"rotation":[0.483536,0.208704,0.336872,0.780483],
+	"scale":[1,1,1],
+	"camera":"Camera"
+},
+{
+	"type":"MATERIAL",
+	"name":"pbr:donut",
+	"normalMap":{ "src":"Poliigon_FoodPastryDonut_10737\\2K\\Poliigon_FoodPastryDonut_10737_Normal.png", "format":"linear" },
+	"pbr":{
+		"albedo":{ "src":"Poliigon_FoodPastryDonut_10737\\2K\\Poliigon_FoodPastryDonut_10737_BaseColor.jpg", "format":"srgb" },
+		"roughness":{ "src":"Poliigon_FoodPastryDonut_10737\\2K\\Poliigon_FoodPastryDonut_10737_Roughness.jpg", "format":"linear" },
+		"metalness":{ "src":"Poliigon_FoodPastryDonut_10737\\2K\\Poliigon_FoodPastryDonut_10737_Metallic.jpg", "format":"linear" }
+	}
+},
+{
+	"type":"MESH",
+	"name":"Torus",
+	"topology":"TRIANGLE_LIST",
+	"count":5184,
+	"attributes":{
+		"POSITION":{ "src":"donut.Torus.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"donut.Torus.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"donut.Torus.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"donut.Torus.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	},
+	"material":"pbr:donut"
+},
+{
+	"type":"NODE",
+	"name":"Donut",
+	"translation":[0,0,0],
+	"rotation":[0,0,0,1],
+	"scale":[1,1,1],
+	"mesh":"Torus"
+},
+{
+	"type":"MATERIAL",
+	"name":"pbr:mug",
+	"pbr":{
+		"albedo":[ 0.390921, 0.390921, 0.390921 ],
+		"roughness":0.3,
+		"metalness":0
+	}
+},
+{
+	"type":"MESH",
+	"name":"Cylinder",
+	"topology":"TRIANGLE_LIST",
+	"count":367104,
+	"attributes":{
+		"POSITION":{ "src":"donut.Cylinder.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"donut.Cylinder.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"donut.Cylinder.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"donut.Cylinder.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	},
+	"material":"pbr:mug"
+},
+{
+	"type":"NODE",
+	"name":"Mug",
+	"translation":[-0.0409032,0.63275,0.0587128],
+	"rotation":[0,0,0,1],
+	"scale":[1,1,1],
+	"mesh":"Cylinder"
+},
+{
+	"type":"MATERIAL",
+	"name":"pbr:icing",
+	"normalMap":{ "src":"Poliigon_FoodGlazeStrawberry_10739\\2K\\Poliigon_FoodGlazeStrawberry_10739_Normal.png", "format":"linear" },
+	"pbr":{
+		"albedo":{ "src":"Poliigon_FoodGlazeStrawberry_10739\\2K\\Poliigon_FoodGlazeStrawberry_10739_BaseColor.jpg", "format":"srgb" },
+		"roughness":{ "src":"Poliigon_FoodGlazeStrawberry_10739\\2K\\Poliigon_FoodGlazeStrawberry_10739_Roughness.jpg", "format":"linear" },
+		"metalness":{ "src":"Poliigon_FoodGlazeStrawberry_10739\\2K\\Poliigon_FoodGlazeStrawberry_10739_Metallic.jpg", "format":"linear" }
+	}
+},
+{
+	"type":"MESH",
+	"name":"Torus.001",
+	"topology":"TRIANGLE_LIST",
+	"count":94848,
+	"attributes":{
+		"POSITION":{ "src":"donut.Torus.001.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"donut.Torus.001.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"donut.Torus.001.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"donut.Torus.001.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	},
+	"material":"pbr:icing"
+},
+{
+	"type":"NODE",
+	"name":"Icing",
+	"translation":[0,0,0],
+	"rotation":[0,0,0,1],
+	"scale":[1,1,1],
+	"mesh":"Torus.001"
+},
+{
+	"type":"MATERIAL",
+	"name":"pbr:plate",
+	"pbr":{
+		"albedo":[ 0.8, 0.8, 0.8 ],
+		"roughness":0.2,
+		"metalness":0
+	}
+},
+{
+	"type":"MESH",
+	"name":"Circle",
+	"topology":"TRIANGLE_LIST",
+	"count":33024,
+	"attributes":{
+		"POSITION":{ "src":"donut.Circle.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"donut.Circle.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"donut.Circle.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"donut.Circle.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	},
+	"material":"pbr:plate"
+},
+{
+	"type":"NODE",
+	"name":"Plate",
+	"translation":[0,0,-0.0473032],
+	"rotation":[0,0,0,1],
+	"scale":[1,1,1],
+	"mesh":"Circle"
+},
+{
+	"type":"MATERIAL",
+	"name":"pbr:table",
+	"normalMap":{ "src":"Poliigon_ConcreteWorn_8690\\2K\\Poliigon_ConcreteWorn_8690_Normal.png", "format":"linear" },
+	"pbr":{
+		"albedo":{ "src":"Poliigon_ConcreteWorn_8690\\2K\\Poliigon_ConcreteWorn_8690_BaseColor.jpg", "format":"srgb" },
+		"roughness":{ "src":"Poliigon_ConcreteWorn_8690\\2K\\Poliigon_ConcreteWorn_8690_Roughness.jpg", "format":"linear" },
+		"metalness":0
+	}
+},
+{
+	"type":"MESH",
+	"name":"Plane",
+	"topology":"TRIANGLE_LIST",
+	"count":6,
+	"attributes":{
+		"POSITION":{ "src":"donut.Plane.pnTt.b72", "offset":0, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"NORMAL":{ "src":"donut.Plane.pnTt.b72", "offset":12, "stride":48, "format":"R32G32B32_SFLOAT" },
+		"TANGENT":{ "src":"donut.Plane.pnTt.b72", "offset":24, "stride":48, "format":"R32G32B32A32_SFLOAT" },
+		"TEXCOORD":{ "src":"donut.Plane.pnTt.b72", "offset":40, "stride":48, "format":"R32G32_SFLOAT" }
+	},
+	"material":"pbr:table"
+},
+{
+	"type":"NODE",
+	"name":"Table",
+	"translation":[-1.07124,1.18573,-0.0723525],
+	"rotation":[0,0,0,1],
+	"scale":[2.26972,2.23799,1.30293],
+	"mesh":"Plane"
+},
+{
+
+	"type":"LIGHT",
+	"name":"Point",
+	"tint":[1, 1, 1],
+	"sphere":{
+		"radius":0,
+		"power":10
+	}
+},
+{
+	"type":"NODE",
+	"name":"Point",
+	"translation":[0.344833,0.142022,0.235842],
+	"rotation":[0,0,0,1],
+	"scale":[1,1,1],
+	"light":"Point"
+},
+{
+	"type":"SCENE",
+	"name":"donut.blend",
+	"roots":["Light", "Camera", "Donut", "Mug", "Icing", "Plate", "Table", "Point"]
+}
+]
