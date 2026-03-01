@@ -2,6 +2,7 @@
 
 #include "../PosColVertex.hpp"
 #include "../PosNorTexVertex.hpp"
+#include "../a2/PosNorTanTexVertex.hpp"
 #include "../libs/S72.hpp"
 
 #include "../RTG.hpp"
@@ -64,27 +65,32 @@ struct S72Loader : RTG::Application {
         VkDescriptorSetLayout set0_World = VK_NULL_HANDLE;
         VkDescriptorSetLayout set1_Transforms = VK_NULL_HANDLE;
         VkDescriptorSetLayout set2_TEXTURE = VK_NULL_HANDLE;
+        VkDescriptorSetLayout set3_Environment = VK_NULL_HANDLE;
 
         struct World {
             struct { float x, y, z, padding_; } SKY_DIRECTION;
             struct { float r, g, b, padding_; } SKY_ENERGY;
             struct { float x, y, z, padding_; } SUN_DIRECTION;
             struct { float r, g, b, padding_; } SUN_ENERGY;
+            struct { float x, y, z, padding_; } EYE;
+            struct { float exposure, padding0, padding1, padding2; } EXPOSURE;
+            struct { int tone_mapping_mode, padding0, padding1, padding2; } TONEMAPPING;
         };
-        static_assert(sizeof(World) == 4*4 + 4*4 + 4*4 + 4*4, "World is the expected size.");
+        static_assert(sizeof(World) == 7*4*4, "World is the expected size.");
 
         struct Transform {
             glm::mat4 CLIP_FROM_LOCAL;
             glm::mat4 WORLD_FROM_LOCAL;
             glm::mat4 WORLD_FROM_LOCAL_NORMAL;
+            struct { int materialType, padding0, padding1, padding2; } MATERIAL_TYPE;
         };
-        static_assert(sizeof(Transform) == 16*4 + 16*4 + 16*4, "Transform is the expected size.");
+        static_assert(sizeof(Transform) == 16*4 + 16*4 + 16*4 + 16, "Transform is the expected size.");
 
         using Camera = LinesPipeline::Camera;
 
         VkPipelineLayout layout = VK_NULL_HANDLE;
 
-        using Vertex = PosNorTexVertex;
+        using Vertex = PosNorTanTexVertex;
 
         VkPipeline handle = VK_NULL_HANDLE;
 
@@ -199,14 +205,6 @@ struct S72Loader : RTG::Application {
     std::vector<LinesPipeline::Vertex> lines_vertices;
 
     ObjectsPipeline::World world;
-
-    struct ObjectInstance {
-        ObjectVertices vertices;
-        ObjectsPipeline::Transform transform;
-        uint32_t texture = 0;
-    };
-    std::vector<ObjectInstance> object_instances;
-
     //--------------------------------------------------------------------
     //Rendering function, uses all the resources above to queue work to draw a frame:
 
@@ -214,8 +212,22 @@ struct S72Loader : RTG::Application {
 
     //---------------------------------------------------------------------
     //Added for a1:
+    struct MaterialConstants {
+        struct { uint32_t type; int32_t has_albedo_map; int32_t has_normal_map; int32_t has_displacement; } FLAGS;
+        struct { float roughness; float metalness; float padding1; float padding2; } PARAMS;
+        struct { float r, g, b; float displacement_scale; } ALBEDO;
+    };
+    static_assert(sizeof(MaterialConstants) == 3 * 4 * 4, "MaterialConstants is the expected size.");
+
     struct MaterialInstance {
-        uint32_t texture_index = 0;
+        uint32_t type = 0; //0 = PBR, 1 = lambertian, 2 = mirror, 3 = environment
+        int32_t normal_index = 1; //default is textures[1]
+        int32_t displacement_idx = 0;
+        int32_t albedo_index = 0; //default is textures[0]
+        int32_t roughness_index = 0;
+        int32_t metalness_index = 0;
+
+        VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
     };
 
     struct MeshInstance {
@@ -231,10 +243,30 @@ struct S72Loader : RTG::Application {
         glm::mat4 world_from_local = glm::mat4(1.0f);
     };
 
+    struct EnvironmentInstance {
+        uint32_t radiance_idx;
+        uint32_t lambertian_idx;
+
+        VkDescriptorSet env_descriptors = VK_NULL_HANDLE;
+    };
+
+    struct ObjectInstance {
+        ObjectVertices vertices;
+        ObjectsPipeline::Transform transform;
+        MaterialInstance* material = nullptr;
+        VkDescriptorSet environment_cube_set = VK_NULL_HANDLE;
+    };
+    std::vector<ObjectInstance> object_instances;
+
     S72 scene;
     std::unordered_map<std::string, ObjectVertices> mesh_data;
     std::unordered_map<std::string, MaterialInstance> material_data; 
     std::unordered_map<std::string, CameraInstance> cameras;
+    std::unordered_map<std::string, EnvironmentInstance> environment_data;
+    std::unordered_map<std::string, uint32_t> loaded_textures;
+
+    std::vector<Helpers::AllocatedImage> textures_cube;
+    std::vector<VkImageView> texture_views_cube;
 
     std::vector<CameraInstance*> camera_list;
     int current_camera_index = 0;
@@ -248,6 +280,8 @@ struct S72Loader : RTG::Application {
 
     void traverse_scene(S72::Node* node, glm::mat4 const &parent_from_world);
     uint32_t load_texture(std::string path, S72::Texture::Format format);
+    uint32_t load_cubemap(std::string path, uint32_t max_lod = 0);
+    uint32_t create_1x1_texture(float r, float g, float b, float a, bool is_srgb);
 
     // SAT test
     // reference: https://bruop.github.io/improved_frustum_culling/

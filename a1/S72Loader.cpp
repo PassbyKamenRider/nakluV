@@ -29,11 +29,26 @@ void S72Loader::traverse_scene(S72::Node *node, glm::mat4 const &parent_from_wor
 			ObjectInstance inst;
 			inst.vertices = it->second;
 			inst.transform.WORLD_FROM_LOCAL = world_matrix;
-
 			inst.transform.WORLD_FROM_LOCAL_NORMAL = glm::transpose(glm::inverse(world_matrix));
 
 			auto mat_it = material_data.find(node->mesh->material->name);
-			inst.texture = (mat_it != material_data.end()) ? mat_it->second.texture_index : 0;
+			if (mat_it != material_data.end()) {
+				inst.material = &mat_it->second;
+
+				auto env_it = environment_data.end();
+				
+				if (node->environment) {
+					env_it = environment_data.find(node->environment->name);
+				} else if (!environment_data.empty()) {
+					env_it = environment_data.begin();
+				}
+
+				if (env_it != environment_data.end()) {
+					inst.environment_cube_set = env_it->second.env_descriptors; 
+				}
+			}
+
+			inst.transform.MATERIAL_TYPE.materialType = inst.material->type;
 
 			if (rtg.configuration.culling)
 			{
@@ -154,38 +169,159 @@ void S72Loader::traverse_scene(S72::Node *node, glm::mat4 const &parent_from_wor
 	}
 }
 
+uint32_t S72Loader::create_1x1_texture(float r, float g, float b, float a, bool is_srgb)
+{
+    auto toUint8 = [](float val) -> uint8_t {
+        return static_cast<uint8_t>(std::clamp(val, 0.0f, 1.0f) * 255.0f + 0.5f);
+    };
+
+    uint8_t pixel[4] = { toUint8(r), toUint8(g), toUint8(b), toUint8(a) };
+
+    VkFormat vk_format = VK_FORMAT_R8G8B8A8_UNORM;
+
+    textures.emplace_back(rtg.helpers.create_image(
+        {1, 1}, 
+        vk_format, 
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
+        Helpers::Unmapped
+    ));
+    
+    rtg.helpers.transfer_to_image(pixel, 4, textures.back());
+    
+    return static_cast<uint32_t>(textures.size() - 1);
+}
+
 uint32_t S72Loader::load_texture(std::string path, S72::Texture::Format format)
 {
-	int width, height, channels;
-	stbi_uc *pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+    int width, height, channels;
+    stbi_uc *pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+    
+    if (!pixels) {
+        throw std::runtime_error("Failed to load texture file: " + path);
+    }
 
-	uint32_t img_w = uint32_t(width);
-	uint32_t img_h = uint32_t(height);
+    uint32_t img_w = uint32_t(width);
+    uint32_t img_h = uint32_t(height);
 
-	VkFormat vk_format;
-	if (format == S72::Texture::Format::srgb)
-	{
-		vk_format = VK_FORMAT_R8G8B8A8_SRGB;
-	}
-	else
-	{
-		vk_format = VK_FORMAT_R8G8B8A8_UNORM;
-	}
+    VkFormat vk_format = (format == S72::Texture::Format::srgb) 
+                         ? VK_FORMAT_R8G8B8A8_SRGB 
+                         : VK_FORMAT_R8G8B8A8_UNORM;
 
-	textures.emplace_back(
-		rtg.helpers.create_image(
-			VkExtent2D{.width = img_w, .height = img_h},
-			vk_format,
-			VK_IMAGE_TILING_OPTIMAL,
-			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			Helpers::Unmapped));
+    textures.emplace_back(
+        rtg.helpers.create_image(
+            VkExtent2D{.width = img_w, .height = img_h},
+            vk_format,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            Helpers::Unmapped));
 
-	rtg.helpers.transfer_to_image(pixels, img_w * img_h * 4, textures.back());
+    rtg.helpers.transfer_to_image(pixels, img_w * img_h * 4, textures.back());
 
-	stbi_image_free(pixels);
+    stbi_image_free(pixels);
 
-	return (uint32_t)(textures.size() - 1);
+    VkImageViewCreateInfo view_info{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = textures.back().handle,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = vk_format,
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        },
+    };
+    return (uint32_t)(textures.size() - 1);
+}
+
+inline glm::vec3 rgbe_to_float(glm::u8vec4 col) {
+    if (col == glm::u8vec4(0,0,0,0)) return glm::vec3(0.0f);
+
+    int exp = int(col.a) - 128;
+    return glm::vec3(
+        std::ldexp((col.r + 0.5f) / 256.0f, exp),
+        std::ldexp((col.g + 0.5f) / 256.0f, exp),
+        std::ldexp((col.b + 0.5f) / 256.0f, exp)
+    );
+}
+
+uint32_t S72Loader::load_cubemap(std::string path, uint32_t max_lod) {
+    int width, height, channels;
+    stbi_uc *pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+    if (!pixels) {
+        std::cerr << "Failed to load cubemap at " << path << std::endl;
+        return 0;
+    }
+
+    uint32_t mipLevels = max_lod + 1;
+    uint32_t img_w = uint32_t(width);
+    uint32_t img_h = uint32_t(height / 6);
+
+    textures_cube.emplace_back(
+        rtg.helpers.create_image(
+            VkExtent2D{.width = img_w, .height = img_h},
+            VK_FORMAT_R32G32B32A32_SFLOAT,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            Helpers::Unmapped,
+            6,
+            VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
+            mipLevels
+        )
+    );
+
+    size_t dot = path.find_last_of('.');
+    std::string prefix = path.substr(0, dot);
+    std::string ext = path.substr(dot);
+
+    for (uint32_t level = 0; level < mipLevels; ++level) {
+        stbi_uc* current_pixels = nullptr;
+        int cur_w, cur_h, cur_c;
+
+        if (level == 0) {
+            current_pixels = pixels;
+            cur_w = width;
+            cur_h = height;
+        } else {
+            std::string level_path = prefix + "." + std::to_string(level) + ext;
+            current_pixels = stbi_load(level_path.c_str(), &cur_w, &cur_h, &cur_c, STBI_rgb_alpha);
+            if (!current_pixels) break; 
+        }
+
+        std::vector<glm::vec4> float_pixels;
+        float_pixels.reserve(cur_w * cur_h);
+
+        for (int i = 0; i < cur_w * cur_h; ++i) {
+            glm::u8vec4 rgbe(
+                current_pixels[i * 4 + 0],
+                current_pixels[i * 4 + 1],
+                current_pixels[i * 4 + 2],
+                current_pixels[i * 4 + 3]
+            );
+
+            glm::vec3 color = rgbe_to_float(rgbe);
+            
+            float_pixels.emplace_back(color.r, color.g, color.b, 1.0f);
+        }
+
+        rtg.helpers.transfer_to_image(
+            float_pixels.data(), 
+            float_pixels.size() * sizeof(glm::vec4), 
+            textures_cube.back(),
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            level 
+        );
+
+        if (level > 0) stbi_image_free(current_pixels);
+    }
+    stbi_image_free(pixels);
+
+    return (uint32_t)(textures_cube.size() - 1);
 }
 
 void S72Loader::update_animations(float current_time)
@@ -249,6 +385,42 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 				  << e.what() << std::endl;
 	}
 
+	{ // make some textures
+		textures.reserve(1);
+
+		{ // texture 0 will be the default albedo map
+			uint32_t size = 1;
+			uint8_t pixel_data[] = { 127, 127, 216, 255 };
+
+			// make a place for the texture to live on the GPU:
+			textures.emplace_back(rtg.helpers.create_image(
+				VkExtent2D{.width = size, .height = size},
+				VK_FORMAT_R8G8B8A8_UNORM,
+				VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped));
+
+			// transfer data:
+			rtg.helpers.transfer_to_image(pixel_data, sizeof(pixel_data), textures.back());
+		}
+
+		{ // texture 1 will be the default normal map
+			uint8_t normal_pixel[] = { 128, 128, 255, 255 };
+
+			textures.emplace_back(rtg.helpers.create_image(
+				VkExtent2D{1, 1},
+				VK_FORMAT_R8G8B8A8_UNORM,
+				VK_IMAGE_TILING_OPTIMAL,
+				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped));
+
+			rtg.helpers.transfer_to_image(normal_pixel, sizeof(normal_pixel), textures.back());
+		}
+	}
+
+	// load data from S72
 	std::unordered_map<std::string, std::vector<char>> loaded_data;
 	for (auto const &[src, datafile] : scene.data_files)
 	{
@@ -281,7 +453,7 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 		active_camera = camera_list.empty() ? nullptr : camera_list[0];
 	}
 
-	std::vector<PosNorTexVertex> vertices;
+	std::vector<PosNorTanTexVertex> vertices;
 	for (auto const &[name, mesh] : scene.meshes)
 	{
 		ObjectVertices info;
@@ -319,6 +491,16 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 			}
 		}
 
+		if (auto it = mesh.attributes.find("TANGENT"); it != mesh.attributes.end())
+        {
+            auto const &attr = it->second;
+            const char *src_ptr = loaded_data.at(attr.src.src).data() + attr.offset;
+            for (uint32_t i = 0; i < mesh.count; ++i)
+            {
+                std::memcpy(&vertices[info.first + i].Tangent, src_ptr + i * attr.stride, sizeof(float) * 4);
+            }
+        }
+
 		if (auto it = mesh.attributes.find("TEXCOORD"); it != mesh.attributes.end())
 		{
 			auto const &attr = it->second;
@@ -332,52 +514,110 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 		mesh_data[name] = info;
 	}
 
+	for (auto const& [name, env] : scene.environments) {
+		EnvironmentInstance inst;
+
+		std::string base_path = env.radiance->path;
+
+		inst.radiance_idx = load_cubemap(base_path, 5);
+
+		size_t dot = base_path.find_last_of('.');
+		std::string prefix = base_path.substr(0, dot);
+		std::string ext = base_path.substr(dot);
+		std::string lambertian_path = prefix + ".lambertian" + ext;
+
+		inst.lambertian_idx = load_cubemap(lambertian_path);
+
+		environment_data[name] = inst;
+	}
+
 	std::unordered_map<std::string, uint32_t> path_to_texture_index;
+
 	for (auto const &[name, mat] : scene.materials)
 	{
-		uint32_t tex_idx = 0;
-		auto handle_albedo = [&](auto const &albedo)
-		{
-			if (auto const *const *tex_ptr = std::get_if<S72::Texture *>(&albedo))
-			{
-				const S72::Texture *tex = *tex_ptr;
-				if (tex)
-				{
-					if (path_to_texture_index.find(tex->src) == path_to_texture_index.end())
-					{
-						path_to_texture_index[tex->src] = this->load_texture(tex->path, tex->format);
-					}
-					return path_to_texture_index[tex->src];
-				}
-			}
-			else
-			{
-				const auto &col = std::get<S72::color>(albedo);
-				uint8_t pixel[4] = {(uint8_t)(col.r * 255.0f), (uint8_t)(col.g * 255.0f), (uint8_t)(col.b * 255.0f), 255};
-				textures.emplace_back(rtg.helpers.create_image({1, 1}, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
-															   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, Helpers::Unmapped));
-				rtg.helpers.transfer_to_image(pixel, 4, textures.back());
-				return (uint32_t)(textures.size() - 1);
-			}
-			return 0u;
-		};
+		MaterialInstance inst;
 
-		if (auto const *pbr = std::get_if<S72::Material::PBR>(&mat.brdf))
+		if (mat.normal_map) {
+			const S72::Texture *n_tex = mat.normal_map;
+			if (path_to_texture_index.find(n_tex->src) == path_to_texture_index.end()) {
+				path_to_texture_index[n_tex->src] = this->load_texture(n_tex->path, n_tex->format);
+			}
+			inst.normal_index = (int)path_to_texture_index[n_tex->src];
+		}
+
+		if (mat.displacement_map) {
+			const S72::Texture *n_tex = mat.displacement_map;
+			if (path_to_texture_index.find(n_tex->src) == path_to_texture_index.end()) {
+				path_to_texture_index[n_tex->src] = this->load_texture(n_tex->path, n_tex->format);
+			}
+			inst.displacement_idx = (int)path_to_texture_index[n_tex->src];
+		}
+
+		if (auto const *pbr = std::get_if<S72::Material::PBR>(&mat.brdf)) 
 		{
-			tex_idx = handle_albedo(pbr->albedo);
+			inst.type = 0;
+
+			if (auto const *const *tex_ptr = std::get_if<S72::Texture *>(&pbr->albedo)) {
+				const S72::Texture *tex = *tex_ptr;
+				if (path_to_texture_index.find(tex->src) == path_to_texture_index.end()) {
+					path_to_texture_index[tex->src] = this->load_texture(tex->path, tex->format);
+				}
+				inst.albedo_index = path_to_texture_index[tex->src];
+			} else if (auto const *col_ptr = std::get_if<S72::color>(&pbr->albedo)) {
+				inst.albedo_index = create_1x1_texture(col_ptr->r, col_ptr->g, col_ptr->b, 1.0f, true);
+			}
+
+			if (auto const *const *tex_ptr = std::get_if<S72::Texture *>(&pbr->roughness)) {
+				const S72::Texture *tex = *tex_ptr;
+				if (path_to_texture_index.find(tex->src) == path_to_texture_index.end()) {
+					path_to_texture_index[tex->src] = this->load_texture(tex->path, tex->format);
+				}
+				inst.roughness_index = path_to_texture_index[tex->src];
+			} else if (auto const *val_ptr = std::get_if<float>(&pbr->roughness)) {
+				float v = *val_ptr;
+    			inst.roughness_index = create_1x1_texture(v, v, v, 1.0f, false);;
+			}
+
+			if (auto const *const *tex_ptr = std::get_if<S72::Texture *>(&pbr->metalness)) {
+				const S72::Texture *tex = *tex_ptr;
+				if (path_to_texture_index.find(tex->src) == path_to_texture_index.end()) {
+					path_to_texture_index[tex->src] = this->load_texture(tex->path, tex->format);
+				}
+				inst.metalness_index = path_to_texture_index[tex->src];
+			} else if (auto const *val_ptr = std::get_if<float>(&pbr->metalness)) {
+				float v = *val_ptr;
+    			inst.metalness_index = create_1x1_texture(v, v, v, 1.0f, false);
+			}
 		}
 		else if (auto const *lambert = std::get_if<S72::Material::Lambertian>(&mat.brdf))
 		{
-			tex_idx = handle_albedo(lambert->albedo);
+			inst.type = 1;
+			if (auto const *const *tex_ptr = std::get_if<S72::Texture *>(&lambert->albedo)) {
+				const S72::Texture *tex = *tex_ptr;
+				if (path_to_texture_index.find(tex->src) == path_to_texture_index.end()) {
+					path_to_texture_index[tex->src] = this->load_texture(tex->path, tex->format);
+				}
+				inst.albedo_index = path_to_texture_index[tex->src];
+			} else {
+				const auto &col = std::get<S72::color>(lambert->albedo);
+    			inst.albedo_index = create_1x1_texture(col.r, col.g, col.b, 1.0f, true);
+			}
 		}
-		material_data[name] = MaterialInstance{.texture_index = tex_idx};
+		else if (std::holds_alternative<S72::Material::Mirror>(mat.brdf)) {
+			inst.type = 2;
+		}
+		else {
+			inst.type = 3;
+		}
+
+		material_data[name] = inst;
 	}
 
 	object_vertices = rtg.helpers.create_buffer(
-		vertices.size() * sizeof(PosNorTexVertex),
+		vertices.size() * sizeof(PosNorTanTexVertex),
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, Helpers::Unmapped);
-	rtg.helpers.transfer_to_buffer(vertices.data(), vertices.size() * sizeof(PosNorTexVertex), object_vertices);
+	rtg.helpers.transfer_to_buffer(vertices.data(), vertices.size() * sizeof(PosNorTanTexVertex), object_vertices);
 
 	// select a depth format
 	// at least one of these two must be supported, according to the spec; but neither are required
@@ -612,44 +852,6 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 		}
 	}
 
-	{ // make some textures
-		textures.reserve(1);
-
-		{ // texture 0 will be a dark grey / light grey checkerboard with a red square at the origin.
-			// make the texture:
-			uint32_t size = 128;
-			std::vector<uint32_t> data;
-			data.reserve(size * size);
-			for (uint32_t y = 0; y < size; ++y)
-			{
-				float fy = (y + 0.5f) / float(size);
-				for (uint32_t x = 0; x < size; ++x)
-				{
-					float fx = (x + 0.5f) / float(size);
-					if (fx < 0.05f && fy < 0.05f)
-						data.emplace_back(0xff0000ff);
-					else if ((fx < 0.5f) == (fy < 0.5f))
-						data.emplace_back(0xff444444);
-					else
-						data.emplace_back(0xffbbbbbb);
-				}
-			}
-			assert(data.size() == size * size);
-
-			// make a place for the texture to live on the GPU:
-			textures.emplace_back(rtg.helpers.create_image(
-				VkExtent2D{.width = size, .height = size},
-				VK_FORMAT_R8G8B8A8_UNORM,
-				VK_IMAGE_TILING_OPTIMAL,
-				VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-				Helpers::Unmapped));
-
-			// transfer data:
-			rtg.helpers.transfer_to_image(data.data(), sizeof(data[0]) * data.size(), textures.back());
-		}
-	}
-
 	{ // make image views for the textures
 		texture_views.reserve(textures.size());
 		for (Helpers::AllocatedImage const &image : textures)
@@ -677,13 +879,36 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 		assert(texture_views.size() == textures.size());
 	}
 
+	{ // make image views for the cubemaps
+		texture_views_cube.clear();
+		texture_views_cube.reserve(textures_cube.size());
+		for (Helpers::AllocatedImage const &image : textures_cube) {
+			VkImageViewCreateInfo create_info{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.image = image.handle,
+				.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
+				.format = image.format,
+				.subresourceRange{
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.baseMipLevel = 0,
+					.levelCount = image.mip_levels,
+					.baseArrayLayer = 0,
+					.layerCount = 6,
+				},
+			};
+			VkImageView image_view;
+			VK(vkCreateImageView(rtg.device, &create_info, nullptr, &image_view));
+			texture_views_cube.emplace_back(image_view);
+		}
+	}
+
 	{ // make a sampler for the textures
 		VkSamplerCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 			.flags = 0,
-			.magFilter = VK_FILTER_NEAREST,
-			.minFilter = VK_FILTER_NEAREST,
-			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
 			.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 			.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
@@ -693,7 +918,7 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 			.compareEnable = VK_FALSE,
 			.compareOp = VK_COMPARE_OP_ALWAYS,
 			.minLod = 0.0f,
-			.maxLod = 0.0f,
+			.maxLod = 5.0f,
 			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
 			.unnormalizedCoordinates = VK_FALSE,
 		};
@@ -701,19 +926,21 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 	}
 
 	{ // create the texture descriptor pool
-		uint32_t per_texture = uint32_t(textures.size());
+		uint32_t material_count = uint32_t(material_data.size());
+		uint32_t env_count = uint32_t(scene.environments.size());
+		uint32_t total_sampler_descriptors = material_count * 5 + env_count * 3;
 
 		std::array<VkDescriptorPoolSize, 1> pool_sizes{
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = 1 * 1 * per_texture,
+				.descriptorCount = total_sampler_descriptors, 
 			},
 		};
 
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0,
-			.maxSets = 1 * per_texture,
+			.maxSets = material_count + env_count,
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -722,44 +949,208 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 	}
 
 	{ // allocate and write the texture descriptor sets
-		VkDescriptorSetAllocateInfo alloc_info{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-			.descriptorPool = texture_descriptor_pool,
-			.descriptorSetCount = 1,
-			.pSetLayouts = &objects_pipeline.set2_TEXTURE,
-		};
-		texture_descriptors.assign(textures.size(), VK_NULL_HANDLE);
-		for (VkDescriptorSet &descriptor_set : texture_descriptors)
+		for (auto &[name, mat] : material_data)
 		{
-			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &descriptor_set));
-		}
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = texture_descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set2_TEXTURE,
+			};
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &mat.descriptor_set));
 
-		// write descriptors for textures
-		std::vector<VkDescriptorImageInfo> infos(textures.size());
-		std::vector<VkWriteDescriptorSet> writes(textures.size());
-
-		for (Helpers::AllocatedImage const &image : textures)
-		{
-			size_t i = &image - &textures[0];
-
-			infos[i] = VkDescriptorImageInfo{
+			VkDescriptorImageInfo albedo_info{
 				.sampler = texture_sampler,
-				.imageView = texture_views[i],
+				.imageView = texture_views.at(mat.albedo_index),
 				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 			};
 
-			writes[i] = VkWriteDescriptorSet{
+			VkDescriptorImageInfo normal_info{
+				.sampler = texture_sampler,
+				.imageView = texture_views.at(mat.normal_index),
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+
+			VkDescriptorImageInfo roughness_info{
+				.sampler = texture_sampler,
+				.imageView = texture_views.at(mat.roughness_index),
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+
+			VkDescriptorImageInfo metalness_info{
+				.sampler = texture_sampler,
+				.imageView = texture_views.at(mat.metalness_index),
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+
+			VkDescriptorImageInfo displacement_info{
+				.sampler = texture_sampler,
+				.imageView = texture_views.at(mat.displacement_idx),
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			};
+
+			std::array<VkWriteDescriptorSet, 5> mat_writes{};
+
+			mat_writes[0] = {
 				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-				.dstSet = texture_descriptors[i],
+				.dstSet = mat.descriptor_set,
 				.dstBinding = 0,
 				.dstArrayElement = 0,
 				.descriptorCount = 1,
 				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.pImageInfo = &infos[i],
+				.pImageInfo = &albedo_info,
 			};
+
+			mat_writes[1] = {
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = mat.descriptor_set,
+				.dstBinding = 1,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &normal_info,
+			};
+			
+			mat_writes[2] = {
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = mat.descriptor_set,
+				.dstBinding = 2,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &roughness_info,
+			};
+
+			mat_writes[3] = {
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = mat.descriptor_set,
+				.dstBinding = 3,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &metalness_info,
+			};
+
+			mat_writes[4] = {
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = mat.descriptor_set,
+				.dstBinding = 4,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &displacement_info,
+			};
+
+			vkUpdateDescriptorSets(rtg.device, uint32_t(mat_writes.size()), mat_writes.data(), 0, nullptr);
+		}
+	}
+
+	VkImageView brdf_lut_view = VK_NULL_HANDLE;
+	{ //read brdf lookup table
+		std::string lut_path = "brdf_lut.bin";
+		
+		std::ifstream file(lut_path, std::ios::binary | std::ios::ate);
+		if (!file.is_open()) {
+			throw std::runtime_error("Failed to open BRDF LUT");
 		}
 
-		vkUpdateDescriptorSets(rtg.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
+		size_t fileSize = (size_t)file.tellg();
+		file.seekg(0);
+		std::vector<char> data(fileSize);
+		if (!file.read(data.data(), fileSize)) {
+			throw std::runtime_error("Failed to read BRDF LUT.");
+		}
+		file.close();
+
+		Helpers::AllocatedImage brdf_lut_image = rtg.helpers.create_image(
+			{512, 512},
+			VK_FORMAT_R32G32B32A32_SFLOAT,
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			Helpers::Unmapped
+		);
+
+		rtg.helpers.transfer_to_image(data.data(), fileSize, brdf_lut_image);
+
+		textures.emplace_back(std::move(brdf_lut_image));
+
+		VkImageViewCreateInfo view_info{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = textures.back().handle,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = VK_FORMAT_R32G32B32A32_SFLOAT,
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			},
+		};
+		VK(vkCreateImageView(rtg.device, &view_info, nullptr, &brdf_lut_view));
+		
+		texture_views.emplace_back(brdf_lut_view); 
+	}
+
+	{ // allocate and write the environment descriptor sets
+		for (auto& [name, inst] : environment_data) {
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = texture_descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set3_Environment, 
+			};
+
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &inst.env_descriptors));
+
+			std::array<VkDescriptorImageInfo, 3> env_infos{
+				VkDescriptorImageInfo{
+					.sampler = texture_sampler,
+					.imageView = texture_views_cube.at(inst.radiance_idx),
+					.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				},
+				VkDescriptorImageInfo{
+					.sampler = texture_sampler,
+					.imageView = texture_views_cube.at(inst.lambertian_idx),
+					.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				},
+				VkDescriptorImageInfo{
+					.sampler = texture_sampler,
+					.imageView = brdf_lut_view,
+					.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				}
+			};
+
+			std::array<VkWriteDescriptorSet, 3> env_writes{
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = inst.env_descriptors,
+					.dstBinding = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.pImageInfo = &env_infos[0],
+				},
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = inst.env_descriptors,
+					.dstBinding = 1,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.pImageInfo = &env_infos[1],
+				},
+					VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = inst.env_descriptors,
+					.dstBinding = 2,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.pImageInfo = &env_infos[2],
+				}
+			};
+
+			vkUpdateDescriptorSets(rtg.device, uint32_t(env_writes.size()), env_writes.data(), 0, nullptr);
+		}
 	}
 }
 
@@ -792,6 +1183,15 @@ S72Loader::~S72Loader()
 		view = VK_NULL_HANDLE;
 	}
 	texture_views.clear();
+
+	for (VkImageView &view : texture_views_cube)
+	{
+		if (view != VK_NULL_HANDLE) {
+			vkDestroyImageView(rtg.device, view, nullptr);
+			view = VK_NULL_HANDLE;
+		}
+	}
+	texture_views_cube.clear();
 
 	for (auto &texture : textures)
 	{
@@ -1110,7 +1510,7 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params)
 	}
 
 	{ // upload world info:
-		assert(workspace.Camera_src.size == sizeof(world));
+		assert(workspace.World_src.size == sizeof(world));
 
 		memcpy(workspace.World_src.allocation.data(), &world, sizeof(world));
 
@@ -1249,17 +1649,24 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params)
 				// Camera descriptor set is still bound, but unused
 
 				// draw all instances:
-				for (ObjectInstance const &inst : object_instances)
+                for (ObjectInstance const &inst : object_instances)
 				{
 					uint32_t index = uint32_t(&inst - &object_instances[0]);
 
-					// bind texture descriptor set
 					vkCmdBindDescriptorSets(
 						workspace.command_buffer,
 						VK_PIPELINE_BIND_POINT_GRAPHICS,
 						objects_pipeline.layout,
 						2,
-						1, &texture_descriptors[inst.texture],
+						1, &inst.material->descriptor_set,
+						0, nullptr);
+
+					vkCmdBindDescriptorSets(
+						workspace.command_buffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						objects_pipeline.layout,
+						3,
+						1, &inst.environment_cube_set,
 						0, nullptr);
 
 					vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
@@ -1474,6 +1881,24 @@ void S72Loader::update(float dt)
 		world.SUN_ENERGY.r = 1.0f;
 		world.SUN_ENERGY.g = 1.0f;
 		world.SUN_ENERGY.b = 0.9f;
+
+		if (camera_mode == CameraMode::Free) {
+			glm::mat4 world_from_camera = glm::inverse(orbit(
+				free_camera.target_x, free_camera.target_y, free_camera.target_z,
+				free_camera.azimuth, free_camera.elevation, free_camera.radius
+			));
+
+			world.EYE.x = world_from_camera[3].x;
+			world.EYE.y = world_from_camera[3].y;
+			world.EYE.z = world_from_camera[3].z;
+		} else {
+			world.EYE.x = active_camera->world_from_local[3].x;
+			world.EYE.y = active_camera->world_from_local[3].y;
+			world.EYE.z = active_camera->world_from_local[3].z;
+		}
+
+		world.EXPOSURE.exposure = float(std::pow(2.0f, rtg.configuration.exposure));
+		world.TONEMAPPING.tone_mapping_mode = rtg.configuration.tone_mapping_mode;
 	}
 
 	{ // objects
