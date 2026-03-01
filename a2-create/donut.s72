@@ -39,11 +39,10 @@
 {
 	"type":"MATERIAL",
 	"name":"pbr:donut",
-	"normalMap":{ "src":"Poliigon_FoodPastryDonut_10737\\2K\\Poliigon_FoodPastryDonut_10737_Normal.png", "format":"linear" },
 	"pbr":{
-		"albedo":{ "src":"Poliigon_FoodPastryDonut_10737\\2K\\Poliigon_FoodPastryDonut_10737_BaseColor.jpg", "format":"srgb" },
-		"roughness":{ "src":"Poliigon_FoodPastryDonut_10737\\2K\\Poliigon_FoodPastryDonut_10737_Roughness.jpg", "format":"linear" },
-		"metalness":{ "src":"Poliigon_FoodPastryDonut_10737\\2K\\Poliigon_FoodPastryDonut_10737_Metallic.jpg", "format":"linear" }
+		"albedo":[ 0.800007, 0.465006, 0.102349 ],
+		"roughness":0.5,
+		"metalness":0
 	}
 },
 {
@@ -100,11 +99,10 @@
 {
 	"type":"MATERIAL",
 	"name":"pbr:icing",
-	"normalMap":{ "src":"Poliigon_FoodGlazeStrawberry_10739\\2K\\Poliigon_FoodGlazeStrawberry_10739_Normal.png", "format":"linear" },
 	"pbr":{
-		"albedo":{ "src":"Poliigon_FoodGlazeStrawberry_10739\\2K\\Poliigon_FoodGlazeStrawberry_10739_BaseColor.jpg", "format":"srgb" },
-		"roughness":{ "src":"Poliigon_FoodGlazeStrawberry_10739\\2K\\Poliigon_FoodGlazeStrawberry_10739_Roughness.jpg", "format":"linear" },
-		"metalness":{ "src":"Poliigon_FoodGlazeStrawberry_10739\\2K\\Poliigon_FoodGlazeStrawberry_10739_Metallic.jpg", "format":"linear" }
+		"albedo":[ 0.800016, 0.302141, 0.63128 ],
+		"roughness":0.3,
+		"metalness":0
 	}
 },
 {
@@ -161,10 +159,9 @@
 {
 	"type":"MATERIAL",
 	"name":"pbr:table",
-	"normalMap":{ "src":"Poliigon_ConcreteWorn_8690\\2K\\Poliigon_ConcreteWorn_8690_Normal.png", "format":"linear" },
 	"pbr":{
-		"albedo":{ "src":"Poliigon_ConcreteWorn_8690\\2K\\Poliigon_ConcreteWorn_8690_BaseColor.jpg", "format":"srgb" },
-		"roughness":{ "src":"Poliigon_ConcreteWorn_8690\\2K\\Poliigon_ConcreteWorn_8690_Roughness.jpg", "format":"linear" },
+		"albedo":{ "src":"marble.jpg", "format":"srgb" },
+		"roughness":0.5,
 		"metalness":0
 	}
 },
