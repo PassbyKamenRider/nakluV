@@ -17,23 +17,23 @@ void S72Loader::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint
     VkShaderModule frag_module = rtg.helpers.create_shader_module(frag_code);
 
     { //the set0_World layout holds world info in a uniform buffer used in the fragment shader:
-		std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
-			VkDescriptorSetLayoutBinding{
-				.binding = 0,
-				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				.descriptorCount = 1,
-				.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
-			},
-		};
-		
-		VkDescriptorSetLayoutCreateInfo create_info{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-			.bindingCount = uint32_t(bindings.size()),
-			.pBindings = bindings.data(),
-		};
+        std::array< VkDescriptorSetLayoutBinding, 1 > bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+            },
+        };
+        
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
 
-		VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set0_World) );
-	}
+        VK( vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set0_World) );
+    }
 
     { //the set1_Transforms layout holds an array of Transform structures in a storage buffer used in the vertex shader:
         std::array<VkDescriptorSetLayoutBinding, 1> bindings {
@@ -55,13 +55,49 @@ void S72Loader::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint
     }
 
     { //the set2_TEXTURE layout has a single descriptor for a sampler2D used in the fragment shader:
-        std::array<VkDescriptorSetLayoutBinding, 1> bindings{
+        std::array<VkDescriptorSetLayoutBinding, 6> bindings{
+            //albedo
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                 .descriptorCount = 1,
                 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
             },
+            //normal
+            {
+                .binding = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+            //roughness
+            {
+                .binding = 2,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+            //metalness
+            {
+                .binding = 3,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+            //displacement
+            {
+                .binding = 4,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+            //constants
+            {
+                .binding = 5,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            }
         };
 
         VkDescriptorSetLayoutCreateInfo create_info{
@@ -73,19 +109,57 @@ void S72Loader::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint
         VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set2_TEXTURE));
     }
 
+    { //the set3_Environment layout has a single descriptor for a samplerCube used in the fragment shader:
+        std::array<VkDescriptorSetLayoutBinding, 3> bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+            VkDescriptorSetLayoutBinding{
+                .binding = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+            VkDescriptorSetLayoutBinding{
+                .binding = 2,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            }
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set3_Environment));
+    }
+
     { //create pipeline layout:
-        std::array<VkDescriptorSetLayout, 3> layouts {
+        std::array<VkDescriptorSetLayout, 4> layouts {
             set0_World,
             set1_Transforms,
             set2_TEXTURE,
+            set3_Environment,
+        };
+
+        VkPushConstantRange push_constant{
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            .offset = 0,
+            .size = sizeof(uint32_t)
         };
 
         VkPipelineLayoutCreateInfo create_info {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
             .setLayoutCount = uint32_t(layouts.size()),
             .pSetLayouts = layouts.data(),
-            .pushConstantRangeCount = 0,
-            .pPushConstantRanges = nullptr,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &push_constant,
         };
 
         VK ( vkCreatePipelineLayout(rtg.device, &create_info, nullptr, &layout));
