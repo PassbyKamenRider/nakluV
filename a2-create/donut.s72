@@ -205,8 +205,21 @@
 	"light":"Point"
 },
 {
+	"type":"ENVIRONMENT",
+	"name":"church.png",
+	"radiance":{"src":"church.png", "type":"cube", "format":"rgbe"}
+},
+{
+	"type":"NODE",
+	"name":"!environment:church.png",
+	"translation":[0,0,0],
+	"rotation":[0,0,0,1],
+	"scale":[1,1,1],
+	"environment":"church.png"
+},
+{
 	"type":"SCENE",
 	"name":"donut.blend",
-	"roots":["Light", "Camera", "Donut", "Mug", "Icing", "Plate", "Table", "Point"]
+	"roots":["Light", "Camera", "Donut", "Mug", "Icing", "Plate", "Table", "Point", "!environment:church.png"]
 }
 ]
