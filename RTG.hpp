@@ -52,7 +52,7 @@ struct RTG {
 
 		//if true, add debug and validation layers and print more debug output:
 		//  `--debug` and `--no-debug` command-line flags
-		bool debug = true;
+		bool debug = false;
 
 		//if set, use a specific device for rendering:
 		// `--physical-device <name>` command-line flag
