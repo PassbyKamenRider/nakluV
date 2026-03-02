@@ -26,16 +26,22 @@ custom_flags_and_rules();
 
 //maek.CPP(...) builds a c++ file:
 // it returns the path to the output object file
+
+const core_objs = [
+    maek.CPP('RTG.cpp'),
+    maek.CPP('Helpers.cpp'),
+    maek.CPP('PosColVertex.cpp'),
+    maek.CPP('PosNorTexVertex.cpp'),
+	maek.CPP('a2/PosNorTanTexVertex.cpp'),
+    maek.CPP('libs/sejp.cpp'),
+    maek.CPP('libs/S72.cpp'),
+];
+
 const main_objs = [
 	maek.CPP('Tutorial.cpp'),
-	maek.CPP('PosColVertex.cpp'),
-	maek.CPP('PosNorTexVertex.cpp'),
-	maek.CPP('RTG.cpp'),
-	maek.CPP('Helpers.cpp'),
 	maek.CPP('main.cpp'),
-	maek.CPP('libs/sejp.cpp'),
-    maek.CPP('libs/S72.cpp'),
 	maek.CPP('a1/S72Loader.cpp'),
+	...core_objs,
 ];
 
 //maek.GLSLC(...) builds a glsl source file:
@@ -67,8 +73,25 @@ main_objs.push( maek.CPP('a1/A1-ObjectsPipeline.cpp', undefined, { depends:[...o
 
 const main_exe = maek.LINK([...main_objs], 'bin/main');
 
+//cube utiliy
+const cube_objs = [
+    maek.CPP('a2/main-cube.cpp'),
+	...core_objs,
+];
+
+const cube_shaders = [
+    maek.GLSLC('a2/cube.comp', 'spv/cube.comp.lambertian', { GLSLCFlags:[...maek.DEFAULT_OPTIONS.GLSLCFlags, '-DLAMBERTIAN'] } ),
+	maek.GLSLC('a2/ggx.comp', 'spv/ggx.comp', { GLSLCFlags:[...maek.DEFAULT_OPTIONS.GLSLCFlags, '-DGGX'] } ),
+	maek.GLSLC('a2/lut.comp', 'spv/lut.comp', { GLSLCFlags:[...maek.DEFAULT_OPTIONS.GLSLCFlags, '-DLUT'] } ),
+];
+cube_objs.push( maek.CPP('a2/A2-LutPipeline.cpp', undefined, { depends:[...cube_shaders] } ) );
+cube_objs.push( maek.CPP('a2/A2-CubePipeline.cpp', undefined, { depends:[...cube_shaders] } ) );
+cube_objs.push( maek.CPP('a2/A2-GGXPipeline.cpp', undefined, { depends:[...cube_shaders] } ) );
+
+const cube_exe = maek.LINK([...cube_objs], 'bin/cube');
+
 //default targets:
-maek.TARGETS = [main_exe];
+maek.TARGETS = [main_exe, cube_exe];
 
 //- - - - - - - - - - - - - - - - - - - - -
 function custom_flags_and_rules() {
