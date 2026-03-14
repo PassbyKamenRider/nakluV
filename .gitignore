@@ -4,5 +4,7 @@ spv/
 bin/main
 bin/main.exe
 bin/main.pdb
+bin/cube.exe
+bin/cube.pdb
 .vscode/
 output/
