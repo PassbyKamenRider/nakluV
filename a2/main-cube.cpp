@@ -255,7 +255,6 @@ int main(int argc, char **argv) {
         configuration.headless = true;
         RTG rtg(configuration);
 
-        // --- Descriptor Pool ---
         std::array<VkDescriptorPoolSize, 2> pool_sizes{
             VkDescriptorPoolSize{
                 .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -282,7 +281,6 @@ int main(int argc, char **argv) {
             &descriptor_pool) 
         );
 
-        // --- Command Pool ---
         VkCommandPoolCreateInfo cp_info{
             .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
             .queueFamilyIndex = rtg.graphics_queue_family.value()
@@ -296,7 +294,6 @@ int main(int argc, char **argv) {
             &command_pool) 
         );
         
-        // --- Command Buffer ---
         VkCommandBufferAllocateInfo cb_info{
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .commandPool = command_pool,
@@ -311,7 +308,6 @@ int main(int argc, char **argv) {
             &cmd) 
         );
 
-        // --- Common Resource Loading ---
         if (mode_lambertian || mode_ggx) {
             int w, h, ch;
             uint8_t* raw_pixels = stbi_load(input_path.c_str(), &w, &h, &ch, 4);
