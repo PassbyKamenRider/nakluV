@@ -974,6 +974,14 @@ void RTG::run(Application &application) {
 			glfwPollEvents();
 		}
 
+		if (!configuration.headless) {
+			int window_width = 0, window_height = 0;
+			glfwGetFramebufferSize(window, &window_width, &window_height);
+			if (window_width == 0 || window_height == 0) {
+				continue;
+			}
+		}
+
 		//deliver all input events to application
 		for (InputEvent const &input : event_queue) {
 			application.on_input(input);
