@@ -140,12 +140,58 @@ void S72Loader::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint
         VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set3_Environment));
     }
 
+    { // the set4_Lights layout: binding 0 = non-shadow lights, binding 1 = shadow lights
+        std::array<VkDescriptorSetLayoutBinding, 2> bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+            VkDescriptorSetLayoutBinding{
+                .binding = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set4_Lights));
+    }
+
+    { // the set5_Shadows layout: shadow map sampler2D array
+        std::array<VkDescriptorSetLayoutBinding, 1> bindings{
+            VkDescriptorSetLayoutBinding{
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = S72Loader::MAX_SHADOW_MAPS,
+                .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            },
+        };
+
+        VkDescriptorSetLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()),
+            .pBindings = bindings.data(),
+        };
+
+        VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set5_Shadows));
+    }
+
     { //create pipeline layout:
-        std::array<VkDescriptorSetLayout, 4> layouts {
+        std::array<VkDescriptorSetLayout, 6> layouts {
             set0_World,
             set1_Transforms,
             set2_TEXTURE,
             set3_Environment,
+            set4_Lights,
+            set5_Shadows,
         };
 
         VkPushConstantRange push_constant{
@@ -284,7 +330,22 @@ void S72Loader::ObjectsPipeline::destroy(RTG &rtg) {
         vkDestroyDescriptorSetLayout(rtg.device, set2_TEXTURE, nullptr);
         set2_TEXTURE = VK_NULL_HANDLE;
     }
-    
+
+    if (set3_Environment != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set3_Environment, nullptr);
+        set3_Environment = VK_NULL_HANDLE;
+    }
+
+    if (set4_Lights != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set4_Lights, nullptr);
+        set4_Lights = VK_NULL_HANDLE;
+    }
+
+    if (set5_Shadows != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(rtg.device, set5_Shadows, nullptr);
+        set5_Shadows = VK_NULL_HANDLE;
+    }
+
     if (layout != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(rtg.device, layout, nullptr);
         layout = VK_NULL_HANDLE;
