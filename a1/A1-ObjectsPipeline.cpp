@@ -170,7 +170,7 @@ void S72Loader::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                .descriptorCount = S72Loader::MAX_SHADOW_MAPS,
+                .descriptorCount = S72Loader::ShadowPipeline::MAX_SHADOW_MAPS,
                 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
             },
         };
