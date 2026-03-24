@@ -140,7 +140,7 @@ void S72Loader::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint
         VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set3_Environment));
     }
 
-    { // the set4_Lights layout: binding 0 = non-shadow lights, binding 1 = shadow lights
+    { // the set4_Lights layout:
         std::array<VkDescriptorSetLayoutBinding, 2> bindings{
             VkDescriptorSetLayoutBinding{
                 .binding = 0,
@@ -165,7 +165,7 @@ void S72Loader::ObjectsPipeline::create(RTG &rtg, VkRenderPass render_pass, uint
         VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set4_Lights));
     }
 
-    { // the set5_Shadows layout: shadow map sampler2D array
+    { // the set5_Shadows layout:
         std::array<VkDescriptorSetLayoutBinding, 1> bindings{
             VkDescriptorSetLayoutBinding{
                 .binding = 0,

@@ -140,25 +140,70 @@ void S72Loader::traverse_scene(S72::Node *node, glm::mat4 const &parent_from_wor
 		}
 	}
 
-	if (node->light)
-	{
+	if (node->light) {
 		auto const &light = *(node->light);
-		if (std::holds_alternative<S72::Light::Sun>(light.source))
-		{
-			glm::vec3 direction = glm::normalize(glm::vec3(world_matrix[2]));
 
+		if (std::holds_alternative<S72::Light::Sun>(light.source)) {
+			glm::vec3 direction = glm::normalize(glm::vec3(world_matrix[2]));
 			auto const &sun = std::get<S72::Light::Sun>(light.source);
 			glm::vec3 energy = glm::vec3(light.tint.r, light.tint.g, light.tint.b) * sun.strength;
 
-			if (sun.angle > 3.0f)
-			{
-				world.SKY_DIRECTION = {direction.x, direction.y, direction.z, 0.0f};
-				world.SKY_ENERGY = {energy.r, energy.g, energy.b, 0.0f};
+			if (sun.angle > 3.0f) {
+				world.SKY_DIRECTION.x = direction.x;
+				world.SKY_DIRECTION.y = direction.y;
+				world.SKY_DIRECTION.z = direction.z;
+				world.SKY_ENERGY.r = energy.r;
+				world.SKY_ENERGY.g = energy.g;
+				world.SKY_ENERGY.b = energy.b;
+			} else {
+				world.SUN_DIRECTION.x = direction.x;
+				world.SUN_DIRECTION.y = direction.y;
+				world.SUN_DIRECTION.z = direction.z;
+				world.SUN_ENERGY.r = energy.r;
+				world.SUN_ENERGY.g = energy.g;
+				world.SUN_ENERGY.b = energy.b;
 			}
-			else
-			{
-				world.SUN_DIRECTION = {direction.x, direction.y, direction.z, 0.0f};
-				world.SUN_ENERGY = {energy.r, energy.g, energy.b, 0.0f};
+		} else {
+			glm::vec3 tint = glm::vec3(light.tint.r, light.tint.g, light.tint.b);
+
+			if (auto const* sphere = std::get_if<S72::Light::Sphere>(&light.source)) {
+				LightInstance inst = {};
+				inst.world_from_local = world_matrix;
+				inst.tint_shadow = glm::vec4(tint, (float)light.shadow);
+				inst.type_power = glm::vec4(1.0f, sphere->power, 0.0f, 0.0f);
+				inst.params = glm::vec4(sphere->radius, sphere->limit, 0.0f, 0.0f);
+				light_data.push_back(inst);
+
+			} else if (auto const* spot = std::get_if<S72::Light::Spot>(&light.source)) {
+				float half_fov = spot->fov * 0.5f;
+				float cosOuter = std::cos(half_fov);
+				float cosInner = std::cos(half_fov * (1.0f - spot->blend));
+
+				if (light.shadow > 0) {
+					ShadowLightInstance inst = {};
+					inst.world_from_local = world_matrix;
+					inst.tint_shadow = glm::vec4(tint, (float)light.shadow);
+					inst.type_power = glm::vec4(2.0f, spot->power, 0.0f, 0.0f);
+					inst.params = glm::vec4(spot->radius, spot->limit, cosInner, cosOuter);
+
+					float far_dist = std::isfinite(spot->limit) ? spot->limit : 100.0f;
+					glm::vec3 light_pos = glm::vec3(world_matrix[3]);
+					glm::vec3 light_dir = -glm::normalize(glm::vec3(world_matrix[2]));
+					glm::vec3 up = (std::abs(glm::dot(light_dir, glm::vec3(0.0f, 1.0f, 0.0f))) > 0.99f)
+						? glm::vec3(1.0f, 0.0f, 0.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+					glm::mat4 view = glm::lookAt(light_pos, light_pos + light_dir, up);
+					glm::mat4 proj = glm::perspective(spot->fov, 1.0f, 0.5f, far_dist);
+					inst.light_VP = proj * view;
+
+					shadow_light_data.push_back(inst);
+				} else {
+					LightInstance inst = {};
+					inst.world_from_local = world_matrix;
+					inst.tint_shadow = glm::vec4(tint, 0.0f);
+					inst.type_power = glm::vec4(2.0f, spot->power, 0.0f, 0.0f);
+					inst.params = glm::vec4(spot->radius, spot->limit, cosInner, cosOuter);
+					light_data.push_back(inst);
+				}
 			}
 		}
 	}
@@ -742,25 +787,30 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 	background_pipeline.create(rtg, render_pass, 0);
 	lines_pipeline.create(rtg, render_pass, 0);
 	objects_pipeline.create(rtg, render_pass, 0);
+	shadow_pipeline.create(rtg, depth_format, objects_pipeline.set1_Transforms);
 
 	{
 		uint32_t per_workspace = uint32_t(rtg.workspaces.size());
 
-		std::array<VkDescriptorPoolSize, 2> pool_sizes{
+		std::array<VkDescriptorPoolSize, 3> pool_sizes{
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				.descriptorCount = 2 * per_workspace,
+				.descriptorCount = 3 * per_workspace,
 			},
 			VkDescriptorPoolSize{
 				.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-				.descriptorCount = 1 * per_workspace,
+				.descriptorCount = 3 * per_workspace,
+			},
+			VkDescriptorPoolSize{
+				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = ShadowPipeline::MAX_SHADOW_MAPS * per_workspace,
 			},
 		};
 
 		VkDescriptorPoolCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0,
-			.maxSets = 3 * per_workspace,
+			.maxSets = 16 * per_workspace,
 			.poolSizeCount = uint32_t(pool_sizes.size()),
 			.pPoolSizes = pool_sizes.data(),
 		};
@@ -823,7 +873,39 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 			};
 
 			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.World_descriptors));
-			// NOTE: will actually fill in this descriptor set just a bit lower
+		}
+
+		size_t lights_buffer_size = std::max(light_data.size(), size_t(1)) * sizeof(LightInstance);
+		workspace.Lights_src = rtg.helpers.create_buffer(
+			lights_buffer_size,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			Helpers::Mapped);
+
+		workspace.Lights = rtg.helpers.create_buffer(
+			lights_buffer_size, 
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			Helpers::Unmapped);
+
+		{ // allocate descriptor set for Lights descriptor
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set4_Lights,
+			};
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Lights_descriptors));
+		}
+
+		{ // allocate descriptor set for shadow maps
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &objects_pipeline.set5_Shadows,
+			};
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &workspace.Shadow_descriptors));
 		}
 
 		{ // allocate descriptor set for Transforms descriptor
@@ -850,7 +932,13 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 				.range = workspace.World.size,
 			};
 
-			std::array<VkWriteDescriptorSet, 2> writes{
+			VkDescriptorBufferInfo Light_info{
+				.buffer = workspace.Lights.handle,
+				.offset = 0,
+				.range = workspace.Lights.size,
+			};
+
+			std::array<VkWriteDescriptorSet, 4> writes{
 				VkWriteDescriptorSet{
 					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 					.dstSet = workspace.Camera_descriptors,
@@ -869,6 +957,22 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 					.pBufferInfo = &World_info,
 				},
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Lights_descriptors,
+					.dstBinding = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.pBufferInfo = &Light_info,
+				},
+				VkWriteDescriptorSet{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Lights_descriptors,
+					.dstBinding = 1,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.pBufferInfo = &Light_info,
+				},
 			};
 
 			vkUpdateDescriptorSets(
@@ -877,6 +981,27 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 				writes.data(),
 				0,
 				nullptr);
+
+			std::array<VkDescriptorImageInfo, ShadowPipeline::MAX_SHADOW_MAPS> dummy_image_infos;
+			for (uint32_t i = 0; i < ShadowPipeline::MAX_SHADOW_MAPS; ++i) {
+				dummy_image_infos[i] = VkDescriptorImageInfo{
+					.sampler = shadow_pipeline.sampler,
+					.imageView = shadow_pipeline.dummy_view,
+					.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				};
+			}
+
+			VkWriteDescriptorSet shadow_write{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = workspace.Shadow_descriptors,
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = ShadowPipeline::MAX_SHADOW_MAPS,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = dummy_image_infos.data(),
+			};
+
+			vkUpdateDescriptorSets(rtg.device, 1, &shadow_write, 0, nullptr);
 		}
 	}
 
@@ -930,13 +1055,12 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 		}
 	}
 
-	{ // make a sampler for the textures
+	{ // make a sampler for the 2D textures
 		VkSamplerCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-			.flags = 0,
 			.magFilter = VK_FILTER_LINEAR,
 			.minFilter = VK_FILTER_LINEAR,
-			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
 			.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 			.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
@@ -944,37 +1068,63 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 			.anisotropyEnable = VK_FALSE,
 			.maxAnisotropy = 0.0f,
 			.compareEnable = VK_FALSE,
-			.compareOp = VK_COMPARE_OP_ALWAYS,
 			.minLod = 0.0f,
-			.maxLod = 5.0f,
+			.maxLod = 0.0f,
 			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
 			.unnormalizedCoordinates = VK_FALSE,
 		};
 		VK(vkCreateSampler(rtg.device, &create_info, nullptr, &texture_sampler));
 	}
 
-	{ // create the texture descriptor pool
-		uint32_t material_count = uint32_t(material_data.size());
-		uint32_t env_count = uint32_t(scene.environments.size());
-		uint32_t total_sampler_descriptors = material_count * 5 + env_count * 3;
-
-		std::array<VkDescriptorPoolSize, 1> pool_sizes{
-			VkDescriptorPoolSize{
-				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = total_sampler_descriptors, 
-			},
+	{ // make a sampler for the cubemap textures
+		VkSamplerCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.mipLodBias = 0.0f,
+			.anisotropyEnable = VK_FALSE,
+			.maxAnisotropy = 0.0f,
+			.compareEnable = VK_FALSE,
+			.minLod = 0.0f,
+			.maxLod = 5.0f,
+			.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+			.unnormalizedCoordinates = VK_FALSE,
 		};
-
-		VkDescriptorPoolCreateInfo create_info{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-			.flags = 0,
-			.maxSets = material_count + env_count,
-			.poolSizeCount = uint32_t(pool_sizes.size()),
-			.pPoolSizes = pool_sizes.data(),
-		};
-
-		VK(vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &texture_descriptor_pool));
+		VK(vkCreateSampler(rtg.device, &create_info, nullptr, &cube_sampler));
 	}
+
+	{ // create the texture descriptor pool
+        uint32_t material_count = uint32_t(material_data.size());
+        uint32_t env_count = uint32_t(scene.environments.size());
+        
+        uint32_t total_sampler_descriptors = material_count * 5 + env_count * 3;
+        uint32_t total_uniform_descriptors = material_count;
+
+        std::array<VkDescriptorPoolSize, 2> pool_sizes{
+            VkDescriptorPoolSize{
+                .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = total_sampler_descriptors, 
+            },
+            VkDescriptorPoolSize{
+                .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = total_uniform_descriptors, 
+            },
+        };
+
+        VkDescriptorPoolCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .flags = 0,
+            .maxSets = material_count + env_count,
+            .poolSizeCount = uint32_t(pool_sizes.size()),
+            .pPoolSizes = pool_sizes.data(),
+        };
+
+        VK(vkCreateDescriptorPool(rtg.device, &create_info, nullptr, &texture_descriptor_pool));
+    }
 
 	{ // allocate and write the texture descriptor sets
 		for (auto &[name, mat] : material_data)
@@ -1134,17 +1284,17 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 
 			std::array<VkDescriptorImageInfo, 3> env_infos{
 				VkDescriptorImageInfo{
-					.sampler = texture_sampler,
+					.sampler = cube_sampler,
 					.imageView = texture_views_cube.at(inst.radiance_idx),
 					.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 				},
 				VkDescriptorImageInfo{
-					.sampler = texture_sampler,
+					.sampler = cube_sampler,
 					.imageView = texture_views_cube.at(inst.lambertian_idx),
 					.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 				},
 				VkDescriptorImageInfo{
-					.sampler = texture_sampler,
+					.sampler = cube_sampler,
 					.imageView = brdf_lut_view,
 					.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 				}
@@ -1205,6 +1355,12 @@ S72Loader::~S72Loader()
 		texture_sampler = VK_NULL_HANDLE;
 	}
 
+	if (cube_sampler)
+	{
+		vkDestroySampler(rtg.device, cube_sampler, nullptr);
+		cube_sampler = VK_NULL_HANDLE;
+	}
+
 	for (VkImageView &view : texture_views)
 	{
 		vkDestroyImageView(rtg.device, view, nullptr);
@@ -1228,6 +1384,15 @@ S72Loader::~S72Loader()
 	textures.clear();
 
 	rtg.helpers.destroy_buffer(std::move(object_vertices));
+
+	for (auto &sm : shadow_maps) {
+		if (sm.framebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(rtg.device, sm.framebuffer, nullptr);
+		if (sm.depth_view != VK_NULL_HANDLE) vkDestroyImageView(rtg.device, sm.depth_view, nullptr);
+		if (sm.depth_image.handle != VK_NULL_HANDLE) rtg.helpers.destroy_image(std::move(sm.depth_image));
+	}
+	shadow_maps.clear();
+
+	shadow_pipeline.destroy(rtg);
 
 	if (swapchain_depth_image.handle != VK_NULL_HANDLE)
 	{
@@ -1273,6 +1438,14 @@ S72Loader::~S72Loader()
 		if (workspace.Transforms.handle != VK_NULL_HANDLE)
 		{
 			rtg.helpers.destroy_buffer(std::move(workspace.Transforms));
+		}
+		if (workspace.ShadowLights_src.handle != VK_NULL_HANDLE)
+		{
+			rtg.helpers.destroy_buffer(std::move(workspace.ShadowLights_src));
+		}
+		if (workspace.ShadowLights.handle != VK_NULL_HANDLE)
+		{
+			rtg.helpers.destroy_buffer(std::move(workspace.ShadowLights));
 		}
 	}
 	workspaces.clear();
@@ -1375,17 +1548,13 @@ void S72Loader::destroy_framebuffers()
 
 void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params)
 {
-	// assert that parameters are valid:
 	assert(&rtg == &rtg_);
 	assert(render_params.workspace_index < workspaces.size());
 	assert(render_params.image_index < swapchain_framebuffers.size());
 
-	// get more convenient names for the current workspace and target framebuffer:
 	Workspace &workspace = workspaces[render_params.workspace_index];
 	VkFramebuffer framebuffer = swapchain_framebuffers[render_params.image_index];
 
-	// record (into `workspace.command_buffer`) commands that run a `render_pass` that just clears `framebuffer`:
-	// refsol::Tutorial_render_record_blank_frame(rtg, render_pass, framebuffer, &workspace.command_buffer);
 	VK(vkResetCommandBuffer(workspace.command_buffer, 0));
 	{ // begin recording
 		VkCommandBufferBeginInfo begin_info{
@@ -1401,7 +1570,6 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params)
 		size_t needed_bytes = lines_vertices.size() * sizeof(lines_vertices[0]);
 		if (workspace.lines_vertices_src.handle == VK_NULL_HANDLE || workspace.lines_vertices_src.size < needed_bytes)
 		{
-			// round to next multiple of 4k to avoid re-allocating continuously if vertex count grows slowly:
 			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
 			if (workspace.lines_vertices_src.handle)
 			{
@@ -1414,15 +1582,15 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params)
 
 			workspace.lines_vertices_src = rtg.helpers.create_buffer(
 				new_bytes,
-				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,											// going to have GPU copy from this memory
-				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, // host-visible memory, coherent (no special sync needed)
-				Helpers::Mapped																// get a pointer to the memory
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				Helpers::Mapped
 			);
 			workspace.lines_vertices = rtg.helpers.create_buffer(
 				new_bytes,
-				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, // going to use as vertex buffer, also going to have GPU into this memory
-				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,								  // GPU-local memory
-				Helpers::Unmapped													  // don't get a pointer to the memory
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped
 			);
 
 			std::cout << "Re-allocated lines buffers to " << new_bytes << " bytes." << std::endl;
@@ -1522,6 +1690,62 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params)
 	}
 
 	{
+		if (!light_data.empty()) 
+		{
+			size_t needed_bytes = light_data.size() * sizeof(LightInstance);
+			
+			if (workspace.Lights_src.handle == VK_NULL_HANDLE || workspace.Lights_src.size < needed_bytes) 
+			{
+				size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
+				
+				if (workspace.Lights_src.handle) rtg.helpers.destroy_buffer(std::move(workspace.Lights_src));
+				if (workspace.Lights.handle)     rtg.helpers.destroy_buffer(std::move(workspace.Lights));
+
+				workspace.Lights_src = rtg.helpers.create_buffer(
+					new_bytes,
+					VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+					VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+					Helpers::Mapped
+				);
+				workspace.Lights = rtg.helpers.create_buffer(
+					new_bytes,
+					VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+					Helpers::Unmapped
+				);
+
+				VkDescriptorBufferInfo lights_info{
+					.buffer = workspace.Lights.handle,
+					.offset = 0,
+					.range = VK_WHOLE_SIZE,
+				};
+
+				VkWriteDescriptorSet write{
+					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.dstSet = workspace.Lights_descriptors,
+					.dstBinding = 0,
+					.descriptorCount = 1,
+					.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+					.pBufferInfo = &lights_info,
+				};
+
+				vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
+				std::cout << "Re-allocated lights buffers to " << new_bytes << " bytes." << std::endl;
+			}
+
+			assert(workspace.Lights_src.allocation.mapped);
+			std::memcpy(workspace.Lights_src.allocation.data(), light_data.data(), needed_bytes);
+
+			VkBufferCopy copy_region{
+				.srcOffset = 0,
+				.dstOffset = 0,
+				.size = needed_bytes,
+			};
+			vkCmdCopyBuffer(workspace.command_buffer, workspace.Lights_src.handle, workspace.Lights.handle, 1, &copy_region);
+		}
+	}
+
+	{
 		LinesPipeline::Camera camera{
 			.CLIP_FROM_WORLD = CLIP_FROM_WORLD};
 		assert(workspace.Camera_src.size == sizeof(camera));
@@ -1560,11 +1784,199 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params)
 
 		vkCmdPipelineBarrier(workspace.command_buffer,
 							 VK_PIPELINE_STAGE_TRANSFER_BIT,
-							 VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+							 VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 							 0,
 							 1, &memory_barrier,
 							 0, nullptr,
 							 0, nullptr);
+	}
+
+	{
+		size_t needed_bytes = shadow_light_data.empty()
+			? sizeof(ShadowLightInstance)
+			: shadow_light_data.size() * sizeof(ShadowLightInstance);
+
+		if (workspace.ShadowLights_src.handle == VK_NULL_HANDLE || workspace.ShadowLights_src.size < needed_bytes)
+		{
+			size_t new_bytes = ((needed_bytes + 4096) / 4096) * 4096;
+
+			if (workspace.ShadowLights_src.handle) rtg.helpers.destroy_buffer(std::move(workspace.ShadowLights_src));
+			if (workspace.ShadowLights.handle)     rtg.helpers.destroy_buffer(std::move(workspace.ShadowLights));
+
+			workspace.ShadowLights_src = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				Helpers::Mapped
+			);
+			workspace.ShadowLights = rtg.helpers.create_buffer(
+				new_bytes,
+				VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped
+			);
+
+			VkDescriptorBufferInfo shadow_lights_info{
+				.buffer = workspace.ShadowLights.handle,
+				.offset = 0,
+				.range = VK_WHOLE_SIZE,
+			};
+
+			VkWriteDescriptorSet write{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = workspace.Lights_descriptors,
+				.dstBinding = 1,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				.pBufferInfo = &shadow_lights_info,
+			};
+			vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
+		}
+
+		if (!shadow_light_data.empty()) {
+			size_t copy_bytes = shadow_light_data.size() * sizeof(ShadowLightInstance);
+			assert(workspace.ShadowLights_src.allocation.mapped);
+			std::memcpy(workspace.ShadowLights_src.allocation.data(), shadow_light_data.data(), copy_bytes);
+
+			VkBufferCopy copy_region{
+				.srcOffset = 0,
+				.dstOffset = 0,
+				.size = copy_bytes,
+			};
+			vkCmdCopyBuffer(workspace.command_buffer, workspace.ShadowLights_src.handle, workspace.ShadowLights.handle, 1, &copy_region);
+		}
+	}
+
+	{
+		active_shadow_count = uint32_t(shadow_light_data.size());
+
+		while (shadow_maps.size() < active_shadow_count) {
+			shadow_maps.push_back(ShadowMap{});
+		}
+
+		for (uint32_t si = 0; si < active_shadow_count; ++si) {
+			uint32_t map_size = uint32_t(shadow_light_data[si].tint_shadow.w);
+
+			ShadowMap &sm = shadow_maps[si];
+
+			if (sm.size != map_size) {
+				if (sm.framebuffer != VK_NULL_HANDLE) {
+					vkDestroyFramebuffer(rtg.device, sm.framebuffer, nullptr);
+					sm.framebuffer = VK_NULL_HANDLE;
+				}
+				if (sm.depth_view != VK_NULL_HANDLE) {
+					vkDestroyImageView(rtg.device, sm.depth_view, nullptr);
+					sm.depth_view = VK_NULL_HANDLE;
+				}
+				if (sm.depth_image.handle != VK_NULL_HANDLE) {
+					rtg.helpers.destroy_image(std::move(sm.depth_image));
+				}
+
+				sm.size = map_size;
+				sm.depth_image = rtg.helpers.create_image(
+					{map_size, map_size},
+					depth_format,
+					VK_IMAGE_TILING_OPTIMAL,
+					VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+					VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+				);
+
+				VkImageViewCreateInfo view_info{
+					.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+					.image = sm.depth_image.handle,
+					.viewType = VK_IMAGE_VIEW_TYPE_2D,
+					.format = depth_format,
+					.subresourceRange{
+						.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+						.baseMipLevel = 0, .levelCount = 1,
+						.baseArrayLayer = 0, .layerCount = 1,
+					},
+				};
+				VK(vkCreateImageView(rtg.device, &view_info, nullptr, &sm.depth_view));
+
+				VkFramebufferCreateInfo fb_info{
+					.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+					.renderPass = shadow_pipeline.render_pass,
+					.attachmentCount = 1,
+					.pAttachments = &sm.depth_view,
+					.width = map_size,
+					.height = map_size,
+					.layers = 1,
+				};
+				VK(vkCreateFramebuffer(rtg.device, &fb_info, nullptr, &sm.framebuffer));
+			}
+
+			VkClearValue depth_clear{.depthStencil{.depth = 1.0f, .stencil = 0}};
+			VkRenderPassBeginInfo shadow_begin{
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+				.renderPass = shadow_pipeline.render_pass,
+				.framebuffer = sm.framebuffer,
+				.renderArea{.offset = {0, 0}, .extent = {map_size, map_size}},
+				.clearValueCount = 1,
+				.pClearValues = &depth_clear,
+			};
+
+			vkCmdBeginRenderPass(workspace.command_buffer, &shadow_begin, VK_SUBPASS_CONTENTS_INLINE);
+
+			VkViewport shadow_viewport{
+				.x = 0.0f, .y = 0.0f,
+				.width = float(map_size), .height = float(map_size),
+				.minDepth = 0.0f, .maxDepth = 1.0f,
+			};
+			VkRect2D shadow_scissor{.offset = {0, 0}, .extent = {map_size, map_size}};
+			vkCmdSetViewport(workspace.command_buffer, 0, 1, &shadow_viewport);
+			vkCmdSetScissor(workspace.command_buffer, 0, 1, &shadow_scissor);
+
+			vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline.handle);
+
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+				shadow_pipeline.layout, 0, 1, &workspace.Transforms_descriptors, 0, nullptr);
+
+			glm::mat4 light_vp = shadow_light_data[si].light_VP;
+			vkCmdPushConstants(workspace.command_buffer, shadow_pipeline.layout,
+				VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &light_vp);
+
+			VkBuffer vertex_buffers[]{object_vertices.handle};
+			VkDeviceSize offsets[]{0};
+			vkCmdBindVertexBuffers(workspace.command_buffer, 0, 1, vertex_buffers, offsets);
+
+			for (ObjectInstance const &inst : object_instances) {
+				uint32_t index = uint32_t(&inst - &object_instances[0]);
+				vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
+			}
+
+			vkCmdEndRenderPass(workspace.command_buffer);
+		}
+
+		{
+			std::array<VkDescriptorImageInfo, ShadowPipeline::MAX_SHADOW_MAPS> image_infos;
+			for (uint32_t i = 0; i < ShadowPipeline::MAX_SHADOW_MAPS; ++i) {
+				if (i < active_shadow_count) {
+					image_infos[i] = VkDescriptorImageInfo{
+						.sampler = shadow_pipeline.sampler,
+						.imageView = shadow_maps[i].depth_view,
+						.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+					};
+				} else {
+					image_infos[i] = VkDescriptorImageInfo{
+						.sampler = shadow_pipeline.sampler,
+						.imageView = shadow_pipeline.dummy_view,
+						.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+					};
+				}
+			}
+
+			VkWriteDescriptorSet write{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = workspace.Shadow_descriptors,
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = ShadowPipeline::MAX_SHADOW_MAPS,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = image_infos.data(),
+			};
+			vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
+		}
 	}
 
 	{ // render pass
@@ -1672,9 +2084,23 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params)
 						0,
 						uint32_t(descriptor_sets.size()), descriptor_sets.data(),
 						0, nullptr);
-				}
+					
+					vkCmdBindDescriptorSets(
+						workspace.command_buffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						objects_pipeline.layout,
+						4,
+						1, &workspace.Lights_descriptors,
+						0, nullptr);
 
-				// Camera descriptor set is still bound, but unused
+					vkCmdBindDescriptorSets(
+						workspace.command_buffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						objects_pipeline.layout,
+						5,
+						1, &workspace.Shadow_descriptors,
+						0, nullptr);
+				}
 
 				// draw all instances:
                 for (ObjectInstance const &inst : object_instances)
@@ -1689,13 +2115,15 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params)
 						1, &inst.material->descriptor_set,
 						0, nullptr);
 
-					vkCmdBindDescriptorSets(
-						workspace.command_buffer,
-						VK_PIPELINE_BIND_POINT_GRAPHICS,
-						objects_pipeline.layout,
-						3,
-						1, &inst.environment_cube_set,
-						0, nullptr);
+					if (inst.environment_cube_set != VK_NULL_HANDLE) {
+						vkCmdBindDescriptorSets(
+							workspace.command_buffer,
+							VK_PIPELINE_BIND_POINT_GRAPHICS,
+							objects_pipeline.layout,
+							3,
+							1, &inst.environment_cube_set,
+							0, nullptr);
+					}
 
 					vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
 				}
@@ -1849,6 +2277,38 @@ void S72Loader::update(float dt)
 
 	playback_time += dt;
 
+	{ // sun and sky defaults:
+		world.SKY_DIRECTION.x = 0.0f;
+		world.SKY_DIRECTION.y = 0.0f;
+		world.SKY_DIRECTION.z = 1.0f;
+
+		world.SKY_ENERGY.r = 0.0f;
+		world.SKY_ENERGY.g = 0.0f;
+		world.SKY_ENERGY.b = 0.0f;
+
+		world.SUN_DIRECTION.x = 0.0f;
+		world.SUN_DIRECTION.y = 0.0f;
+		world.SUN_DIRECTION.z = 1.0f;
+
+		world.SUN_ENERGY.r = 0.0f;
+		world.SUN_ENERGY.g = 0.0f;
+		world.SUN_ENERGY.b = 0.0f;
+	}
+
+	{
+		object_instances.clear();
+		lines_vertices.clear();
+		light_data.clear();
+		shadow_light_data.clear();
+
+		glm::mat4 identity = glm::mat4(1.0f);
+
+		for (auto *root_node : scene.scene.roots)
+		{
+			traverse_scene(root_node, identity);
+		}
+	}
+
 	{
 		if (camera_mode == CameraMode::Scene && active_camera != nullptr)
 		{
@@ -1893,23 +2353,7 @@ void S72Loader::update(float dt)
 		}
 	}
 
-	{ // sun and sky:
-		world.SKY_DIRECTION.x = 0.0f;
-		world.SKY_DIRECTION.y = 0.0f;
-		world.SKY_DIRECTION.z = 1.0f;
-
-		world.SKY_ENERGY.r = 0.1f;
-		world.SKY_ENERGY.g = 0.1f;
-		world.SKY_ENERGY.b = 0.2f;
-
-		world.SUN_DIRECTION.x = 6.0f / 23.0f;
-		world.SUN_DIRECTION.y = 13.0f / 23.0f;
-		world.SUN_DIRECTION.z = 18.0f / 23.0f;
-
-		world.SUN_ENERGY.r = 1.0f;
-		world.SUN_ENERGY.g = 1.0f;
-		world.SUN_ENERGY.b = 0.9f;
-
+	{
 		if (camera_mode == CameraMode::Free) {
 			glm::mat4 world_from_camera = glm::inverse(orbit(
 				free_camera.target_x, free_camera.target_y, free_camera.target_z,
@@ -1929,17 +2373,7 @@ void S72Loader::update(float dt)
 		world.TONEMAPPING.tone_mapping_mode = rtg.configuration.tone_mapping_mode;
 	}
 
-	{ // objects
-		object_instances.clear();
-		lines_vertices.clear();
-
-		glm::mat4 identity = glm::mat4(1.0f);
-
-		for (auto *root_node : scene.scene.roots)
-		{
-			traverse_scene(root_node, identity);
-		}
-
+	{
 		for (auto &inst : object_instances)
 		{
 			inst.transform.CLIP_FROM_LOCAL = CLIP_FROM_WORLD * inst.transform.WORLD_FROM_LOCAL;

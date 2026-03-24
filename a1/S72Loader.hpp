@@ -66,6 +66,8 @@ struct S72Loader : RTG::Application {
         VkDescriptorSetLayout set1_Transforms = VK_NULL_HANDLE;
         VkDescriptorSetLayout set2_TEXTURE = VK_NULL_HANDLE;
         VkDescriptorSetLayout set3_Environment = VK_NULL_HANDLE;
+        VkDescriptorSetLayout set4_Lights = VK_NULL_HANDLE;
+        VkDescriptorSetLayout set5_Shadows = VK_NULL_HANDLE;
 
         struct World {
             struct { float x, y, z, padding_; } SKY_DIRECTION;
@@ -122,6 +124,15 @@ struct S72Loader : RTG::Application {
         Helpers::AllocatedBuffer Transforms_src;
         Helpers::AllocatedBuffer Transforms;
         VkDescriptorSet Transforms_descriptors;
+
+        Helpers::AllocatedBuffer Lights;
+        Helpers::AllocatedBuffer Lights_src;
+        VkDescriptorSet Lights_descriptors;
+
+        Helpers::AllocatedBuffer ShadowLights;
+        Helpers::AllocatedBuffer ShadowLights_src;
+
+        VkDescriptorSet Shadow_descriptors;
     };
     std::vector< Workspace > workspaces;
 
@@ -156,6 +167,7 @@ struct S72Loader : RTG::Application {
     std::vector<Helpers::AllocatedImage> textures;
     std::vector<VkImageView> texture_views;
     VkSampler texture_sampler = VK_NULL_HANDLE;
+    VkSampler cube_sampler = VK_NULL_HANDLE;
     VkDescriptorPool texture_descriptor_pool = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> texture_descriptors;
 
@@ -236,12 +248,16 @@ struct S72Loader : RTG::Application {
         MaterialInstance* material = nullptr;
         glm::mat4 world_from_local = glm::mat4(1.0f);
     };
+    std::unordered_map<std::string, MaterialInstance> material_data; 
 
     struct CameraInstance {
         std::string name;
         S72::Camera::Perspective props;
         glm::mat4 world_from_local = glm::mat4(1.0f);
     };
+    std::unordered_map<std::string, CameraInstance> cameras;
+    std::vector<CameraInstance*> camera_list;
+    int current_camera_index = 0;
 
     struct EnvironmentInstance {
         uint32_t radiance_idx;
@@ -249,6 +265,48 @@ struct S72Loader : RTG::Application {
 
         VkDescriptorSet env_descriptors = VK_NULL_HANDLE;
     };
+    std::unordered_map<std::string, EnvironmentInstance> environment_data;
+
+    struct LightInstance {
+        glm::mat4 world_from_local;
+        glm::vec4 type_power;   // x=type (1:Sphere, 2:Spot), y=power
+        glm::vec4 tint_shadow;  // xyz=tint, w=shadow map size
+        glm::vec4 params;       // x=radius, y=limit, z=cosInner, w=cosOuter
+    };
+    std::vector<LightInstance> light_data;
+
+    struct ShadowLightInstance {
+        glm::mat4 world_from_local;
+        glm::vec4 type_power;
+        glm::vec4 tint_shadow;
+        glm::vec4 params;
+        glm::mat4 light_VP;
+    };
+    std::vector<ShadowLightInstance> shadow_light_data;
+
+    struct ShadowPipeline {
+        static constexpr uint32_t MAX_SHADOW_MAPS = 32;
+
+        VkRenderPass render_pass = VK_NULL_HANDLE;
+        VkPipeline handle = VK_NULL_HANDLE;
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        VkSampler sampler = VK_NULL_HANDLE;
+
+        Helpers::AllocatedImage dummy_image;
+        VkImageView dummy_view = VK_NULL_HANDLE;
+
+        void create(RTG &, VkFormat depth_format, VkDescriptorSetLayout transforms_layout);
+        void destroy(RTG &);
+    } shadow_pipeline;
+
+    struct ShadowMap {
+        Helpers::AllocatedImage depth_image;
+        VkImageView depth_view = VK_NULL_HANDLE;
+        VkFramebuffer framebuffer = VK_NULL_HANDLE;
+        uint32_t size = 0;
+    };
+    std::vector<ShadowMap> shadow_maps;
+    uint32_t active_shadow_count = 0;
 
     struct ObjectInstance {
         ObjectVertices vertices;
@@ -260,16 +318,10 @@ struct S72Loader : RTG::Application {
 
     S72 scene;
     std::unordered_map<std::string, ObjectVertices> mesh_data;
-    std::unordered_map<std::string, MaterialInstance> material_data; 
-    std::unordered_map<std::string, CameraInstance> cameras;
-    std::unordered_map<std::string, EnvironmentInstance> environment_data;
     std::unordered_map<std::string, uint32_t> loaded_textures;
 
     std::vector<Helpers::AllocatedImage> textures_cube;
     std::vector<VkImageView> texture_views_cube;
-
-    std::vector<CameraInstance*> camera_list;
-    int current_camera_index = 0;
 
     std::vector<MeshInstance> mesh_instances;
     CameraInstance* active_camera = nullptr;
