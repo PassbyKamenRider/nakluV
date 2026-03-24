@@ -67,10 +67,14 @@ main_objs.push( maek.CPP('a1/A1-LinesPipeline.cpp', undefined, { depends:[...lin
 const objects_shaders = [
 	maek.GLSLC('objects.vert'),
 	maek.GLSLC('objects.frag'),
-	maek.GLSLC('shadow.vert'),
 ];
 main_objs.push( maek.CPP('Tutorial-ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
 main_objs.push( maek.CPP('a1/A1-ObjectsPipeline.cpp', undefined, { depends:[...objects_shaders] } ) );
+
+const shadow_shaders = [
+	maek.GLSLC('shadow.vert'),
+];
+main_objs.push( maek.CPP('a3/A3-ShadowPipeline.cpp', undefined, { depends:[...shadow_shaders] } ) );
 
 const main_exe = maek.LINK([...main_objs], 'bin/main');
 
