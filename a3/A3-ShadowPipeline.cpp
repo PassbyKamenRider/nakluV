@@ -159,39 +159,17 @@ void S72Loader::ShadowPipeline::create(RTG &rtg, VkFormat depth_format, VkDescri
 		VK(vkCreateImageView(rtg.device, &view_info, nullptr, &dummy_view));
 	}
 
-	{ // set0_Lights descriptor set layout (for shadow pipeline)
-		VkDescriptorSetLayoutBinding binding{
-			.binding = 0,
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-		};
-
-		VkDescriptorSetLayoutCreateInfo create_info{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-			.bindingCount = 1,
-			.pBindings = &binding,
-		};
-
-		VK(vkCreateDescriptorSetLayout(rtg.device, &create_info, nullptr, &set0_Lights));
-	}
-
-	{ // shadow pipeline layout
-		std::array<VkDescriptorSetLayout, 2> layouts{
-			set0_Lights,         // set0: shadow lights SSBO
-			transforms_layout,   // set1: transforms SSBO
-		};
-
+	{ // shadow pipeline layout: set0 = transforms, push constant = mat4 light VP
 		VkPushConstantRange push_constant{
 			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
 			.offset = 0,
-			.size = sizeof(uint32_t),
+			.size = sizeof(float) * 16,
 		};
 
 		VkPipelineLayoutCreateInfo create_info{
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-			.setLayoutCount = uint32_t(layouts.size()),
-			.pSetLayouts = layouts.data(),
+			.setLayoutCount = 1,
+			.pSetLayouts = &transforms_layout,
 			.pushConstantRangeCount = 1,
 			.pPushConstantRanges = &push_constant,
 		};
@@ -309,10 +287,6 @@ void S72Loader::ShadowPipeline::destroy(RTG &rtg) {
 	if (layout != VK_NULL_HANDLE) {
 		vkDestroyPipelineLayout(rtg.device, layout, nullptr);
 		layout = VK_NULL_HANDLE;
-	}
-	if (set0_Lights != VK_NULL_HANDLE) {
-		vkDestroyDescriptorSetLayout(rtg.device, set0_Lights, nullptr);
-		set0_Lights = VK_NULL_HANDLE;
 	}
 	if (render_pass != VK_NULL_HANDLE) {
 		vkDestroyRenderPass(rtg.device, render_pass, nullptr);
