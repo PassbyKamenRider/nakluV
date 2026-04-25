@@ -444,6 +444,17 @@ S72 S72::load(std::string const &scene_file) {
 				object.erase(f);
 			}
 
+			if (auto f = object.find("pterrain"); f != object.end()) {
+				std::string ref;
+				try {
+					ref = f->second.as_string().value();
+				} catch (std::exception &) {
+					throw std::runtime_error("Node \"" + name + "\"'s pterrain should be a string.");
+				}
+				node.pterrain = &s72.pterrains[ref];
+				object.erase(f);
+			}
+
 		} else if (type == "MESH"){
 			//reference to the thing we are parsing into:
 			Mesh &mesh = s72.meshes[name];
@@ -941,6 +952,49 @@ S72 S72::load(std::string const &scene_file) {
 			if (!have_source) {
 				throw std::runtime_error("Light \"" + name + "\" is missing a source.");
 			}
+		} else if (type == "PTERRAIN") {
+			PTerrain &pt = s72.pterrains[name];
+
+			if (pt.name != "") {
+				throw std::runtime_error("Multiple \"PTERRAIN\" objects with name \"" + name + "\".");
+			}
+			pt.name = name;
+
+			if (object.contains("block_size")) {
+				pt.block_size = extract_float(&object, "block_size", "PTerrain \"" + name + "\"'s block_size");
+			}
+			if (object.contains("block_resolution")) {
+				pt.block_resolution = extract_uint32_t(&object, "block_resolution", "PTerrain \"" + name + "\"'s block_resolution");
+			}
+			if (object.contains("isovalue")) {
+				pt.isovalue = extract_float(&object, "isovalue", "PTerrain \"" + name + "\"'s isovalue");
+			}
+			if (object.contains("octaves")) {
+				pt.octaves = extract_uint32_t(&object, "octaves", "PTerrain \"" + name + "\"'s octaves");
+			}
+			if (object.contains("persistence")) {
+				pt.persistence = extract_float(&object, "persistence", "PTerrain \"" + name + "\"'s persistence");
+			}
+			if (object.contains("lacunarity")) {
+				pt.lacunarity = extract_float(&object, "lacunarity", "PTerrain \"" + name + "\"'s lacunarity");
+			}
+			if (object.contains("frequency")) {
+				pt.frequency = extract_float(&object, "frequency", "PTerrain \"" + name + "\"'s frequency");
+			}
+			if (object.contains("view_radius")) {
+				pt.view_radius = int32_t(extract_uint32_t(&object, "view_radius", "PTerrain \"" + name + "\"'s view_radius"));
+			}
+			if (auto f = object.find("material"); f != object.end()) {
+				std::string ref;
+				try {
+					ref = f->second.as_string().value();
+				} catch (std::exception &) {
+					throw std::runtime_error("PTerrain \"" + name + "\"'s material should be a string.");
+				}
+				pt.material = &s72.materials[ref];
+				object.erase(f);
+			}
+
 		} else {
 			std::cerr << "WARNING: ignoring object \"" << name << "\" of unrecognized type \"" << type << "\"." << std::endl;
 		}

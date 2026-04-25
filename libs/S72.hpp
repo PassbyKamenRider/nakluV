@@ -67,6 +67,7 @@ struct S72 {
 	struct Material;
 	struct Environment;
 	struct Light;
+	struct PTerrain;
 
 	//-------------------------------------------------
 	//s72 Scenes contain:
@@ -93,6 +94,7 @@ struct S72 {
 		Camera *camera = nullptr;
 		Environment *environment = nullptr;
 		Light *light = nullptr;
+		PTerrain *pterrain = nullptr;
 	};
 	std::unordered_map< std::string, Node > nodes;
 
@@ -252,4 +254,18 @@ struct S72 {
 		std::variant< Sun, Sphere, Spot > source;
 	};
 	std::unordered_map< std::string, Light > lights;
+
+	struct PTerrain {
+		std::string name;
+		float block_size;
+		uint32_t block_resolution;
+		float isovalue;
+		uint32_t octaves;
+		float persistence;
+		float lacunarity;
+		float frequency;
+		int32_t view_radius;
+		Material *material = nullptr;
+	};
+	std::unordered_map< std::string, PTerrain > pterrains;
 };

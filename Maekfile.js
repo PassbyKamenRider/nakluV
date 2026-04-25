@@ -76,6 +76,11 @@ const shadow_shaders = [
 ];
 main_objs.push( maek.CPP('a3/A3-ShadowPipeline.cpp', undefined, { depends:[...shadow_shaders] } ) );
 
+const terrain_shaders = [
+	maek.GLSLC('terrain.comp'),
+];
+main_objs.push( maek.CPP('a3/A3-TerrainComputePipeline.cpp', undefined, { depends:[...terrain_shaders] } ) );
+
 const main_exe = maek.LINK([...main_objs], 'bin/main');
 
 //cube utiliy
