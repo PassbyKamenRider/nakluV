@@ -3,6 +3,7 @@
 #include "../PosColVertex.hpp"
 #include "../PosNorTexVertex.hpp"
 #include "../a2/PosNorTanTexVertex.hpp"
+#include "../a3/A3-TerrainComputePipeline.hpp"
 #include "../libs/S72.hpp"
 
 #include "../RTG.hpp"
@@ -307,6 +308,22 @@ struct S72Loader : RTG::Application {
     };
     std::vector<ShadowMap> shadow_maps;
     uint32_t active_shadow_count = 0;
+
+    TerrainComputePipeline terrain_compute_pipeline;
+    VkDescriptorPool terrain_descriptor_pool = VK_NULL_HANDLE;
+
+    struct TerrainBlock {
+        Helpers::AllocatedBuffer vertex_buffer;
+        VkDescriptorSet compute_descriptor_set = VK_NULL_HANDLE;
+        uint32_t vertex_count = 0;
+    };
+
+    struct Terrain {
+        S72::PTerrain *params = nullptr;
+        MaterialInstance *material = nullptr;
+        glm::vec3 center_world = glm::vec3(0.0f);
+        std::vector<TerrainBlock> blocks;
+    } terrain;
 
     struct ObjectInstance {
         ObjectVertices vertices;

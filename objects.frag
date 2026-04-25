@@ -298,6 +298,23 @@ void main() {
         computeColor = shadeLambertian(N_geom);
     } else if (materialType.x == 2) { // Mirror
         computeColor = shadeMirror(N_geom, v);
+    } else if (materialType.x == 4) { // terrain
+        vec3 blend = abs(N_geom);
+        blend /= (blend.x + blend.y + blend.z + 0.00001);
+
+        float texScale = 0.1;
+        vec3 albedo = texture(TEXTURE, position.yz * texScale).rgb * blend.x
+                    + texture(TEXTURE, position.xz * texScale).rgb * blend.y
+                    + texture(TEXTURE, position.xy * texScale).rgb * blend.z;
+
+        vec3 radiance = albedo * 0.1;
+
+        float sunNdotL = max(dot(N_geom, SUN_DIRECTION), 0.0);
+        if (sunNdotL > 0.0) {
+            radiance += (albedo / PI) * SUN_ENERGY * sunNdotL;
+        }
+
+        computeColor = vec4(radiance, 1.0);
     } else { // Environment
         computeColor = shadeEnvironment(N_geom);
     }

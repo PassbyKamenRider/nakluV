@@ -686,11 +686,16 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 		material_data[name] = inst;
 	}
 
-	object_vertices = rtg.helpers.create_buffer(
-		vertices.size() * sizeof(PosNorTanTexVertex),
-		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, Helpers::Unmapped);
-	rtg.helpers.transfer_to_buffer(vertices.data(), vertices.size() * sizeof(PosNorTanTexVertex), object_vertices);
+	{
+		size_t buf_size = std::max(vertices.size() * sizeof(PosNorTanTexVertex), size_t(sizeof(PosNorTanTexVertex)));
+		object_vertices = rtg.helpers.create_buffer(
+			buf_size,
+			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, Helpers::Unmapped);
+		if (!vertices.empty()) {
+			rtg.helpers.transfer_to_buffer(vertices.data(), vertices.size() * sizeof(PosNorTanTexVertex), object_vertices);
+		}
+	}
 
 	// select a depth format
 	// at least one of these two must be supported, according to the spec; but neither are required
@@ -788,6 +793,41 @@ S72Loader::S72Loader(RTG &rtg_) : rtg(rtg_)
 	lines_pipeline.create(rtg, render_pass, 0);
 	objects_pipeline.create(rtg, render_pass, 0);
 	shadow_pipeline.create(rtg, depth_format, objects_pipeline.set1_Transforms);
+
+	if (!scene.pterrains.empty()) {
+		terrain_compute_pipeline.create(rtg);
+		terrain.params = &scene.pterrains.begin()->second;
+
+		if (terrain.params->material) {
+			auto it = material_data.find(terrain.params->material->name);
+			if (it != material_data.end()) {
+				terrain.material = &it->second;
+			}
+		}
+
+		for (auto const &[nname, node] : scene.nodes) {
+			if (node.pterrain == terrain.params) {
+				terrain.center_world = node.translation;
+				break;
+			}
+		}
+
+		int32_t r = terrain.params->view_radius;
+		uint32_t side = uint32_t(r * 2 + 1);
+		uint32_t max_blocks = side * side * side;
+		VkDescriptorPoolSize pool_size{
+			.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = max_blocks,
+		};
+		VkDescriptorPoolCreateInfo pool_ci{
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+			.maxSets = max_blocks,
+			.poolSizeCount = 1,
+			.pPoolSizes = &pool_size,
+		};
+		VK(vkCreateDescriptorPool(rtg.device, &pool_ci, nullptr, &terrain_descriptor_pool));
+	}
 
 	{
 		uint32_t per_workspace = uint32_t(rtg.workspaces.size());
@@ -1340,6 +1380,16 @@ S72Loader::~S72Loader()
 	{
 		std::cerr << "Failed to vkDeviceWaitIdle in S72Loader::~S72Loader [" << string_VkResult(result) << "]; continuing anyway." << std::endl;
 	}
+
+	for (auto &block : terrain.blocks) {
+		rtg.helpers.destroy_buffer(std::move(block.vertex_buffer));
+	}
+	terrain.blocks.clear();
+	if (terrain_descriptor_pool != VK_NULL_HANDLE) {
+		vkDestroyDescriptorPool(rtg.device, terrain_descriptor_pool, nullptr);
+		terrain_descriptor_pool = VK_NULL_HANDLE;
+	}
+	terrain_compute_pipeline.destroy(rtg);
 
 	if (texture_descriptor_pool)
 	{
@@ -1979,6 +2029,94 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params)
 		}
 	}
 
+	if (terrain.params && terrain.blocks.empty()) {
+		S72::PTerrain &params = *terrain.params;
+		float block_size = params.block_size;
+		uint32_t res = params.block_resolution;
+		uint32_t cells_per_edge = res - 1;
+		uint32_t vert_count = cells_per_edge * cells_per_edge * cells_per_edge * 15u;
+		VkDeviceSize buf_size = vert_count * sizeof(PosNorTanTexVertex);
+		uint32_t groups = (cells_per_edge + 3) / 4;
+		int32_t radius = params.view_radius;
+		int32_t cx = int32_t(std::floor(terrain.center_world.x / block_size));
+		int32_t cy = int32_t(std::floor(terrain.center_world.y / block_size));
+		int32_t cz = int32_t(std::floor(terrain.center_world.z / block_size));
+
+		terrain.blocks.reserve(size_t((2*radius+1) * (2*radius+1) * (2*radius+1)));
+
+		vkCmdBindPipeline(workspace.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, terrain_compute_pipeline.handle);
+
+		for (int32_t gz = cz - radius; gz <= cz + radius; ++gz) {
+		for (int32_t gy = cy - radius; gy <= cy + radius; ++gy) {
+		for (int32_t gx = cx - radius; gx <= cx + radius; ++gx) {
+			TerrainBlock block;
+			block.vertex_count = vert_count;
+
+			block.vertex_buffer = rtg.helpers.create_buffer(
+				buf_size,
+				VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+				Helpers::Unmapped
+			);
+
+			VkDescriptorSetAllocateInfo alloc_info{
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+				.descriptorPool = terrain_descriptor_pool,
+				.descriptorSetCount = 1,
+				.pSetLayouts = &terrain_compute_pipeline.set0_vertices,
+			};
+			VK(vkAllocateDescriptorSets(rtg.device, &alloc_info, &block.compute_descriptor_set));
+
+			VkDescriptorBufferInfo buf_info{
+				.buffer = block.vertex_buffer.handle,
+				.offset = 0,
+				.range = buf_size,
+			};
+			VkWriteDescriptorSet write{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = block.compute_descriptor_set,
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				.pBufferInfo = &buf_info,
+			};
+			vkUpdateDescriptorSets(rtg.device, 1, &write, 0, nullptr);
+
+			vkCmdBindDescriptorSets(workspace.command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+				terrain_compute_pipeline.layout, 0, 1, &block.compute_descriptor_set, 0, nullptr);
+
+			TerrainComputePipeline::PushConstants pc{
+				.block_origin_x = float(gx) * block_size,
+				.block_origin_y = float(gy) * block_size,
+				.block_origin_z = float(gz) * block_size,
+				.block_size = block_size,
+				.resolution = res,
+				.isovalue = params.isovalue,
+				.octaves = params.octaves,
+				.persistence = params.persistence,
+				.lacunarity = params.lacunarity,
+				.frequency = params.frequency,
+			};
+			vkCmdPushConstants(workspace.command_buffer, terrain_compute_pipeline.layout,
+				VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+
+			vkCmdDispatch(workspace.command_buffer, groups, groups, groups);
+
+			terrain.blocks.push_back(std::move(block));
+		}}}
+
+		VkMemoryBarrier barrier{
+			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+		};
+		vkCmdPipelineBarrier(workspace.command_buffer,
+			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+			0, 1, &barrier, 0, nullptr, 0, nullptr);
+	}
+
 	{ // render pass
 		std::array<VkClearValue, 2> clear_values{
 			VkClearValue{.color{.float32{0.0f, 0.0f, 0.0f, 1.0f}}},
@@ -2126,6 +2264,25 @@ void S72Loader::render(RTG &rtg_, RTG::RenderParams const &render_params)
 					}
 
 					vkCmdDraw(workspace.command_buffer, inst.vertices.count, 1, inst.vertices.first, index);
+				}
+
+				// draw terrain blocks (reuses objects_pipeline with material type 4)
+				if (terrain.params && !terrain.blocks.empty() && terrain.material) {
+					uint32_t terrain_transform_idx = uint32_t(object_instances.size()) - 1;
+
+					vkCmdBindDescriptorSets(
+						workspace.command_buffer,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						objects_pipeline.layout,
+						2, 1, &terrain.material->descriptor_set,
+						0, nullptr);
+
+					for (auto const &block : terrain.blocks) {
+						VkBuffer vb[] = {block.vertex_buffer.handle};
+						VkDeviceSize offsets[] = {0};
+						vkCmdBindVertexBuffers(workspace.command_buffer, 0, 1, vb, offsets);
+						vkCmdDraw(workspace.command_buffer, block.vertex_count, 1, 0, terrain_transform_idx);
+					}
 				}
 			}
 		}
@@ -2306,6 +2463,19 @@ void S72Loader::update(float dt)
 		for (auto *root_node : scene.scene.roots)
 		{
 			traverse_scene(root_node, identity);
+		}
+
+		// terrain uses a single identity transform at the end of object_instances (material type 4)
+		if (terrain.params) {
+			ObjectInstance terrain_inst;
+			terrain_inst.vertices.first = 0;
+			terrain_inst.vertices.count = 0;
+			terrain_inst.transform.CLIP_FROM_LOCAL = CLIP_FROM_WORLD;
+			terrain_inst.transform.WORLD_FROM_LOCAL = glm::mat4(1.0f);
+			terrain_inst.transform.WORLD_FROM_LOCAL_NORMAL = glm::mat4(1.0f);
+			terrain_inst.transform.MATERIAL_TYPE = {4, 0, 0, 0};
+			terrain_inst.material = terrain.material;
+			object_instances.push_back(terrain_inst);
 		}
 	}
 
